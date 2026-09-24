@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="48" y="48" width="416" height="416" rx="116" fill="#173B63"/>
+
+  <!-- One continuous emblem: book planes meet at a spine that rises into the bulb. -->
+  <path d="M103 292C159 272 211 282 256 320V420C210 385 159 374 103 394V292Z" fill="#F4F1E9"/>
+  <path d="M409 292C353 272 301 282 256 320V420C302 385 353 374 409 394V292Z" fill="#F4F1E9"/>
+
+  <!-- The center spine is also the bulb stem. -->
+  <path d="M256 325V286" stroke="#F4F1E9" stroke-width="22" stroke-linecap="round"/>
+  <path d="M256 102C200 102 166 143 171 194C174 226 192 246 214 263C228 274 235 284 235 300H277C277 284 284 274 298 263C320 246 338 226 341 194C346 143 312 102 256 102Z" stroke="#F4F1E9" stroke-width="22" stroke-linejoin="round"/>
+  <path d="M232 300H280" stroke="#F4F1E9" stroke-width="22" stroke-linecap="round"/>
+
+  <!-- Minimal light cues. -->
+  <path d="M256 78V61M177 112L165 100M335 112L347 100" stroke="#F4F1E9" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- The check is carved from the right page as negative space. -->
+  <path d="M294 346L319 369L365 319" stroke="#173B63" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,80 @@
+{
+  "name": "kit",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "desktop:prepare": "node scripts/prepare-desktop.mjs",
+    "desktop:build": "pnpm build && pnpm desktop:prepare && electron-builder --win nsis",
+    "desktop:open": "electron electron/main.cjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3.31.3",
+    "@tiptap/extension-highlight": "^3.31.3",
+    "@tiptap/extension-image": "latest",
+    "@tiptap/extension-list": "^3.31.3",
+    "@tiptap/extension-placeholder": "latest",
+    "@tiptap/extension-task-item": "latest",
+    "@tiptap/extension-task-list": "latest",
+    "@tiptap/extension-text-style": "^3.31.3",
+    "@tiptap/pm": "^3.31.3",
+    "@tiptap/react": "latest",
+    "@tiptap/starter-kit": "latest",
+    "better-sqlite3": "latest",
+    "clsx": "latest",
+    "drizzle-orm": "latest",
+    "lucide-react": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "concurrently": "^10.0.5",
+    "drizzle-kit": "latest",
+    "electron": "^44.4.1",
+    "electron-builder": "^26.15.3",
+    "eslint": "latest",
+    "eslint-config-next": "latest",
+    "typescript": "latest",
+    "vitest": "latest",
+    "wait-on": "^9.1.0"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.kit.knowledgeworkbench",
+    "productName": "KIT",
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "next"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron-winstaller"
+    ]
+  }
+}

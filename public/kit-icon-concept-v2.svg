@@ -1,0 +1,30 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="78" y1="58" x2="438" y2="452" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#397BC3"/>
+      <stop offset="1" stop-color="#173F70"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="132" y1="286" x2="374" y2="418" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F9FCFF" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#D9ECFB" stop-opacity="0.1"/>
+    </linearGradient>
+    <filter id="shadow" x="22" y="24" width="468" height="474" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#09213D" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <rect x="52" y="42" width="408" height="408" rx="112" fill="url(#bg)"/>
+
+    <!-- The open book and its center spine form one continuous base. -->
+    <path d="M117 286C169 270 215 278 256 310C297 278 343 270 395 286V386C346 373 303 386 256 419C209 386 166 373 117 386V286Z" fill="url(#paper)" stroke="#F3F8FD" stroke-width="22" stroke-linejoin="round"/>
+    <path d="M256 310V419" stroke="#F3F8FD" stroke-width="18" stroke-linecap="round"/>
+
+    <!-- The book spine rises directly into a light bulb. -->
+    <path d="M256 310V289C256 270 247 258 229 244C204 225 190 199 193 169C197 129 223 103 256 103C289 103 315 129 319 169C322 199 308 225 283 244C265 258 256 270 256 289" stroke="#F3F8FD" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M225 279H287M231 301H281" stroke="#F3F8FD" stroke-width="17" stroke-linecap="round"/>
+    <path d="M256 76V56M177 109L162 94M335 109L350 94" stroke="#CDE5F8" stroke-width="16" stroke-linecap="round"/>
+
+    <!-- The check mark is embedded into the right page. -->
+    <path d="M292 347L318 371L365 319" stroke="#88DBB9" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
