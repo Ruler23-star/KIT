@@ -26,11 +26,11 @@ function startServer() {
   const isPackaged = app.isPackaged;
   const serverDir = isPackaged ? path.join(process.resourcesPath, "next") : path.join(__dirname, "..", ".next", "standalone");
   const serverFile = path.join(serverDir, "server.js");
-  server = spawn(process.execPath, [serverFile], {
+  const nodeExecutable = isPackaged ? path.join(process.resourcesPath, "node", "node.exe") : process.execPath;
+  server = spawn(nodeExecutable, [serverFile], {
     cwd: serverDir,
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
       HOSTNAME: "127.0.0.1",
       PORT: String(port),
       NODE_ENV: "production",

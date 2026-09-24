@@ -1,6 +1,8 @@
 {
   "name": "kit",
   "version": "0.1.0",
+  "description": "Local-first knowledge, ideas and todo workspace",
+  "author": "Ruler23-star",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -52,6 +54,7 @@
   "build": {
     "appId": "com.kit.knowledgeworkbench",
     "productName": "KIT",
+    "npmRebuild": false,
     "files": [
       "electron/**/*",
       "package.json"
@@ -60,9 +63,14 @@
       {
         "from": ".next/standalone",
         "to": "next"
+      },
+      {
+        "from": ".desktop-runtime",
+        "to": "node"
       }
     ],
     "win": {
+      "icon": "public/kit-icon.png",
       "target": "nsis"
     },
     "nsis": {
