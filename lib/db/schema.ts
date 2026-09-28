@@ -53,6 +53,9 @@ export const todos = sqliteTable("todos", {
   scheduledStartDate: text("scheduled_start_date"),
   scheduledTime: text("scheduled_time"),
   scheduledDuration: integer("scheduled_duration").notNull().default(60),
+  automationKind: text("automation_kind"),
+  automationDate: text("automation_date"),
+  wasScheduled: integer("was_scheduled", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

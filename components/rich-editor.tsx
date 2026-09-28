@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type UIEvent } from "react";
+import { createPortal } from "react-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { Extension } from "@tiptap/core";
+import { Extension, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
@@ -15,6 +16,8 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import {
   Bold,
+  Check,
+  Crop,
   Highlighter,
   Heading1,
   Heading2,
@@ -23,7 +26,9 @@ import {
   Lightbulb,
   List,
   ListOrdered,
+  Maximize2,
   MessageSquareText,
+  Minimize2,
   Pilcrow,
   Quote,
   Redo2,
@@ -31,7 +36,17 @@ import {
   Strikethrough,
   Undo2,
   WrapText,
+  X,
 } from "lucide-react";
+
+type CropInsets = { top: number; right: number; bottom: number; left: number };
+type CropHandle = "top-left" | "top" | "top-right" | "right" | "bottom-right" | "bottom" | "bottom-left" | "left";
+
+const CROP_HANDLES: CropHandle[] = ["top-left", "top", "top-right", "right", "bottom-right", "bottom", "bottom-left", "left"];
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
 
 const StyledBulletList = BulletList.extend({
   addAttributes() {
@@ -113,7 +128,26 @@ type RichEditorProps = {
 
 export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: RichEditorProps) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editorRef = useRef<ReturnType<typeof useEditor>>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const composingRef = useRef(false);
+  const pointerSelectingRef = useRef(false);
+  const selectionPointerYRef = useRef<number | null>(null);
+  const selectionScrollTopRef = useRef(0);
+  const selectionScrollTimeRef = useRef(0);
+  const correctingSelectionScrollRef = useRef(false);
+  const pendingHtmlRef = useRef(content);
+  const lastEmittedHtmlRef = useRef<string | null>(null);
+  const onChangeRef = useRef(onChange);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cropDragRef = useRef<{
+    handle: CropHandle;
+    startX: number;
+    startY: number;
+    width: number;
+    height: number;
+    insets: CropInsets;
+  } | null>(null);
   const [selectedText, setSelectedText] = useState("");
   const [selectionPosition, setSelectionPosition] = useState({ left: 0, top: 0 });
   const [aiOpen, setAiOpen] = useState(false);
@@ -122,7 +156,57 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
   const [imageSelected, setImageSelected] = useState(false);
   const [imageLayoutOpen, setImageLayoutOpen] = useState(false);
   const [imageMenuPosition, setImageMenuPosition] = useState({ left: 0, top: 0 });
+  const [imageRect, setImageRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
+  const [cropMode, setCropMode] = useState(false);
+  const [cropInsets, setCropInsets] = useState<CropInsets>({ top: 0, right: 0, bottom: 0, left: 0 });
+  const [cropBusy, setCropBusy] = useState(false);
+  const [cropError, setCropError] = useState("");
+  const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
   const [showFormattingMarks, setShowFormattingMarks] = useState(false);
+
+  onChangeRef.current = onChange;
+
+  function queueSave(html: string) {
+    pendingHtmlRef.current = html;
+    if (composingRef.current) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      const nextHtml = pendingHtmlRef.current;
+      lastEmittedHtmlRef.current = nextHtml;
+      onChangeRef.current(nextHtml);
+    }, 650);
+  }
+
+  function syncSelectionUi(current: Editor) {
+    const hasSelectedImage = current.isActive("image");
+    setImageSelected(hasSelectedImage);
+    if (hasSelectedImage) {
+      setSelectedText("");
+      setAiOpen(false);
+      setAiStatus("");
+      return;
+    }
+
+    setCropMode(false);
+    setCropError("");
+    setImageLayoutOpen(false);
+    const { from, to } = current.state.selection;
+    const text = current.state.doc.textBetween(from, to, " ").trim();
+    setSelectedText(text);
+    if (!text) {
+      setAiOpen(false);
+      setAiStatus("");
+      return;
+    }
+
+    const start = current.view.coordsAtPos(from);
+    const end = current.view.coordsAtPos(to);
+    const left = Math.min(window.innerWidth - 210, Math.max(210, (start.left + end.right) / 2));
+    const below = Math.max(start.bottom, end.bottom) + 10;
+    const top = below > window.innerHeight - 92 ? Math.min(start.top, end.top) - 58 : below;
+    setSelectionPosition({ left, top });
+  }
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -141,6 +225,35 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
     content,
     editorProps: {
       attributes: { class: "prose-editor" },
+      handleDOMEvents: {
+        pointerdown: (_view, event) => {
+          if (event.button !== 0) return false;
+          pointerSelectingRef.current = true;
+          selectionPointerYRef.current = event.clientY;
+          selectionScrollTopRef.current = scrollAreaRef.current?.scrollTop ?? 0;
+          selectionScrollTimeRef.current = performance.now();
+          setSelectedText("");
+          setAiOpen(false);
+          setAiStatus("");
+          return false;
+        },
+        compositionstart: () => {
+          composingRef.current = true;
+          if (timer.current) {
+            clearTimeout(timer.current);
+            timer.current = null;
+          }
+          return false;
+        },
+        compositionend: () => {
+          composingRef.current = false;
+          window.setTimeout(() => {
+            const current = editorRef.current;
+            if (current) queueSave(current.getHTML());
+          }, 0);
+          return false;
+        },
+      },
       handlePaste: (_view, event) => {
         const imageFile = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
         if (!imageFile) return false;
@@ -149,39 +262,114 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
       },
     },
     onUpdate: ({ editor: current }) => {
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => onChange(current.getHTML()), 650);
+      const html = current.getHTML();
+      pendingHtmlRef.current = html;
+      if (composingRef.current || current.view.composing) {
+        if (timer.current) {
+          clearTimeout(timer.current);
+          timer.current = null;
+        }
+        return;
+      }
+      queueSave(html);
     },
     onSelectionUpdate: ({ editor: current }) => {
-      const hasSelectedImage = current.isActive("image");
-      setImageSelected(hasSelectedImage);
-      if (hasSelectedImage) {
-        setSelectedText("");
-        setAiOpen(false);
-        setAiStatus("");
-        return;
-      }
-      setImageLayoutOpen(false);
-      const { from, to } = current.state.selection;
-      const text = current.state.doc.textBetween(from, to, " ").trim();
-      setSelectedText(text);
-      if (!text) {
-        setAiOpen(false);
-        setAiStatus("");
-        return;
-      }
-
-      const start = current.view.coordsAtPos(from);
-      const end = current.view.coordsAtPos(to);
-      const left = Math.min(window.innerWidth - 210, Math.max(210, (start.left + end.right) / 2));
-      const below = Math.max(start.bottom, end.bottom) + 10;
-      const top = below > window.innerHeight - 92 ? Math.min(start.top, end.top) - 58 : below;
-      setSelectionPosition({ left, top });
+      if (!pointerSelectingRef.current) syncSelectionUi(current);
     },
   });
 
   useEffect(() => {
-    if (editor && editor.getHTML() !== content) editor.commands.setContent(content, { emitUpdate: false });
+    editorRef.current = editor;
+    return () => { editorRef.current = null; };
+  }, [editor]);
+
+  useEffect(() => {
+    const trackSelectionPointer = (event: PointerEvent) => {
+      if (pointerSelectingRef.current) selectionPointerYRef.current = event.clientY;
+    };
+    const finishPointerSelection = () => {
+      if (!pointerSelectingRef.current) return;
+      pointerSelectingRef.current = false;
+      selectionPointerYRef.current = null;
+      window.requestAnimationFrame(() => {
+        const current = editorRef.current;
+        if (current) syncSelectionUi(current);
+      });
+    };
+    window.addEventListener("pointermove", trackSelectionPointer);
+    window.addEventListener("pointerup", finishPointerSelection);
+    window.addEventListener("pointercancel", finishPointerSelection);
+    return () => {
+      window.removeEventListener("pointermove", trackSelectionPointer);
+      window.removeEventListener("pointerup", finishPointerSelection);
+      window.removeEventListener("pointercancel", finishPointerSelection);
+    };
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("image-crop-active", cropMode);
+    return () => document.body.classList.remove("image-crop-active");
+  }, [cropMode]);
+
+  useEffect(() => {
+    document.body.classList.toggle("editor-fullscreen-open", isEditorFullscreen);
+    const exitOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && isEditorFullscreen) setIsEditorFullscreen(false);
+    };
+    window.addEventListener("keydown", exitOnEscape);
+    return () => {
+      window.removeEventListener("keydown", exitOnEscape);
+      document.body.classList.remove("editor-fullscreen-open");
+    };
+  }, [isEditorFullscreen]);
+
+  function limitSelectionAutoScroll(event: UIEvent<HTMLDivElement>) {
+    const area = event.currentTarget;
+    if (!pointerSelectingRef.current) return;
+    if (correctingSelectionScrollRef.current) {
+      if (Math.abs(area.scrollTop - selectionScrollTopRef.current) >= 0.5) {
+        area.scrollTop = selectionScrollTopRef.current;
+      }
+      return;
+    }
+
+    const previousTop = selectionScrollTopRef.current;
+    const requestedTop = area.scrollTop;
+    if (requestedTop <= previousTop) {
+      selectionScrollTopRef.current = requestedTop;
+      selectionScrollTimeRef.current = performance.now();
+      return;
+    }
+
+    const pointerY = selectionPointerYRef.current;
+    const rect = area.getBoundingClientRect();
+    const editorLineHeight = editor ? Number.parseFloat(getComputedStyle(editor.view.dom).lineHeight) : 29;
+    const lastLineZone = Math.max(28, (Number.isFinite(editorLineHeight) ? editorLineHeight : 29) * 1.35);
+    const reachedLastVisibleLine = pointerY !== null && pointerY >= rect.bottom - lastLineZone;
+
+    const now = performance.now();
+    const elapsed = Math.min(32, Math.max(8, now - selectionScrollTimeRef.current));
+    const maxStep = reachedLastVisibleLine ? Math.max(1, elapsed * 0.09) : 0;
+    const nextTop = Math.min(requestedTop, previousTop + maxStep);
+
+    selectionScrollTopRef.current = nextTop;
+    selectionScrollTimeRef.current = now;
+    if (Math.abs(requestedTop - nextTop) < 0.5) return;
+
+    correctingSelectionScrollRef.current = true;
+    area.scrollTop = nextTop;
+    window.requestAnimationFrame(() => {
+      correctingSelectionScrollRef.current = false;
+    });
+  }
+
+  useEffect(() => {
+    if (!editor || content === lastEmittedHtmlRef.current) return;
+    if (composingRef.current || editor.view.composing || editor.isFocused || timer.current) return;
+    if (editor.getHTML() !== content) {
+      pendingHtmlRef.current = content;
+      editor.commands.setContent(content, { emitUpdate: false });
+    }
   }, [content, editor]);
 
   useEffect(() => {
@@ -194,10 +382,13 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
       const selectedImage = globalThis.document.querySelector<HTMLElement>(".prose-editor [data-resize-container].ProseMirror-selectednode");
       if (!selectedImage) return;
       const rect = selectedImage.getBoundingClientRect();
-      const fitsOnRight = rect.right + 54 <= window.innerWidth;
+      const image = selectedImage.querySelector("img");
+      const imageBounds = image?.getBoundingClientRect() ?? rect;
+      const fitsOnRight = rect.right + 98 <= window.innerWidth;
       const left = fitsOnRight ? rect.right + 10 : Math.max(12, rect.right - 42);
       const top = Math.max(12, Math.min(rect.top + 8, window.innerHeight - 52));
       setImageMenuPosition({ left, top });
+      setImageRect({ left: imageBounds.left, top: imageBounds.top, width: imageBounds.width, height: imageBounds.height });
     };
     updatePosition();
     window.addEventListener("resize", updatePosition);
@@ -208,7 +399,47 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
       window.removeEventListener("scroll", updatePosition, true);
       window.removeEventListener("pointermove", updatePosition);
     };
-  }, [imageSelected]);
+  }, [imageSelected, isEditorFullscreen]);
+
+  useEffect(() => {
+    const updateCrop = (event: PointerEvent) => {
+      const drag = cropDragRef.current;
+      if (!drag) return;
+
+      const horizontalDelta = ((event.clientX - drag.startX) / drag.width) * 100;
+      const verticalDelta = ((event.clientY - drag.startY) / drag.height) * 100;
+      const minimumWidth = Math.min(80, (44 / drag.width) * 100);
+      const minimumHeight = Math.min(80, (44 / drag.height) * 100);
+      const next = { ...drag.insets };
+
+      if (drag.handle.includes("left")) {
+        next.left = clamp(drag.insets.left + horizontalDelta, 0, 100 - drag.insets.right - minimumWidth);
+      }
+      if (drag.handle.includes("right")) {
+        next.right = clamp(drag.insets.right - horizontalDelta, 0, 100 - drag.insets.left - minimumWidth);
+      }
+      if (drag.handle.includes("top")) {
+        next.top = clamp(drag.insets.top + verticalDelta, 0, 100 - drag.insets.bottom - minimumHeight);
+      }
+      if (drag.handle.includes("bottom")) {
+        next.bottom = clamp(drag.insets.bottom - verticalDelta, 0, 100 - drag.insets.top - minimumHeight);
+      }
+      setCropInsets(next);
+    };
+    const finishCrop = () => {
+      cropDragRef.current = null;
+      document.body.classList.remove("cropping-image");
+    };
+    window.addEventListener("pointermove", updateCrop);
+    window.addEventListener("pointerup", finishCrop);
+    window.addEventListener("pointercancel", finishCrop);
+    return () => {
+      window.removeEventListener("pointermove", updateCrop);
+      window.removeEventListener("pointerup", finishCrop);
+      window.removeEventListener("pointercancel", finishCrop);
+      document.body.classList.remove("cropping-image");
+    };
+  }, []);
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
@@ -266,8 +497,88 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
     setImageLayoutOpen(false);
   }
 
+  function startImageCrop() {
+    setImageLayoutOpen(false);
+    setCropInsets({ top: 0, right: 0, bottom: 0, left: 0 });
+    setCropError("");
+    setCropMode(true);
+  }
+
+  function toggleEditorFullscreen() {
+    setCropMode(false);
+    setImageLayoutOpen(false);
+    setSelectedText("");
+    setIsEditorFullscreen((fullscreen) => !fullscreen);
+    window.requestAnimationFrame(() => editor?.commands.focus());
+  }
+
+  function beginCropDrag(handle: CropHandle, event: ReactPointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    cropDragRef.current = {
+      handle,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: Math.max(1, imageRect.width),
+      height: Math.max(1, imageRect.height),
+      insets: cropInsets,
+    };
+    document.body.classList.add("cropping-image");
+  }
+
+  async function applyImageCrop() {
+    const selectedImage = globalThis.document.querySelector<HTMLElement>(".prose-editor [data-resize-container].ProseMirror-selectednode");
+    const image = selectedImage?.querySelector<HTMLImageElement>("img");
+    if (!image || !editor) return;
+
+    const visibleWidth = 100 - cropInsets.left - cropInsets.right;
+    const visibleHeight = 100 - cropInsets.top - cropInsets.bottom;
+    if (visibleWidth >= 99.9 && visibleHeight >= 99.9) {
+      setCropMode(false);
+      return;
+    }
+
+    setCropBusy(true);
+    setCropError("");
+    try {
+      const response = await fetch(image.currentSrc || image.src);
+      if (!response.ok) throw new Error("无法读取图片");
+      const originalBlob = await response.blob();
+      const bitmap = await createImageBitmap(originalBlob);
+      const sourceX = Math.round(bitmap.width * cropInsets.left / 100);
+      const sourceY = Math.round(bitmap.height * cropInsets.top / 100);
+      const sourceWidth = Math.max(1, Math.round(bitmap.width * visibleWidth / 100));
+      const sourceHeight = Math.max(1, Math.round(bitmap.height * visibleHeight / 100));
+      const canvas = document.createElement("canvas");
+      canvas.width = sourceWidth;
+      canvas.height = sourceHeight;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("浏览器无法创建裁剪画布");
+      context.drawImage(bitmap, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+      bitmap.close();
+
+      const outputType = ["image/jpeg", "image/png", "image/webp"].includes(originalBlob.type) ? originalBlob.type : "image/png";
+      const croppedBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("无法生成裁剪图片")), outputType, 0.94);
+      });
+      const extension = outputType === "image/jpeg" ? "jpg" : outputType.split("/")[1];
+      const form = new FormData();
+      form.append("file", new File([croppedBlob], `cropped-image.${extension}`, { type: outputType }));
+      const uploadResponse = await fetch("/api/uploads", { method: "POST", body: form });
+      const result = await uploadResponse.json();
+      if (!uploadResponse.ok) throw new Error(result.error || "裁剪图片保存失败");
+
+      editor.chain().focus().updateAttributes("image", { src: result.url }).run();
+      setCropMode(false);
+    } catch (error) {
+      setCropError(error instanceof Error ? error.message : "图片裁剪失败");
+    } finally {
+      setCropBusy(false);
+    }
+  }
+
   return (
-    <div className="editor-frame">
+    <div className={isEditorFullscreen ? "editor-frame editor-fullscreen" : "editor-frame"}>
       <div className="editor-toolbar">
         <label className="toolbar-select font-size-select" title="字号大小">
           <span>字号</span>
@@ -317,13 +628,23 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
         <button title="恢复" aria-label="恢复" onClick={() => editor.chain().focus().redo().run()}><Redo2 size={17} /></button>
         <button title="插入图片" aria-label="插入图片" onClick={() => fileRef.current?.click()}><ImagePlus size={17} /></button>
         <button className={showFormattingMarks ? "active" : ""} title="显示/隐藏回车符号" aria-label="显示/隐藏回车符号" onClick={() => setShowFormattingMarks((visible) => !visible)}><Pilcrow size={17} /></button>
+        <button
+          className="editor-fullscreen-toggle"
+          title={isEditorFullscreen ? "退出正文全屏（Esc）" : "正文全屏"}
+          aria-label={isEditorFullscreen ? "退出正文全屏" : "正文全屏"}
+          aria-pressed={isEditorFullscreen}
+          onClick={toggleEditorFullscreen}
+        >
+          {isEditorFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+        </button>
         <input ref={fileRef} hidden type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => event.target.files?.[0] && void uploadImage(event.target.files[0])} />
         {uploading && <span className="save-state">正在保存图片…</span>}
       </div>
 
       {imageSelected && (
         <div className="image-layout-control" style={{ left: imageMenuPosition.left, top: imageMenuPosition.top }}>
-          <button className={imageLayoutOpen ? "active" : ""} aria-label="图片布局选项" title="图片布局选项" onClick={() => setImageLayoutOpen((open) => !open)}><WrapText size={21} /></button>
+          <button className={imageLayoutOpen ? "active" : ""} aria-label="图片布局选项" title="图片布局选项" onClick={() => { setCropMode(false); setImageLayoutOpen((open) => !open); }}><WrapText size={21} /></button>
+          <button className={cropMode ? "active" : ""} aria-label="裁剪图片" title="裁剪图片" onClick={startImageCrop}><Crop size={20} /></button>
           {imageLayoutOpen && <div className="image-layout-popover">
             <strong>文字环绕</strong>
             <button className={(editor.getAttributes("image").layout || "block") === "block" ? "active" : ""} onClick={() => setImageLayout("block")}><span className="layout-preview inline" />嵌入型</button>
@@ -334,10 +655,45 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
         </div>
       )}
 
+      {cropMode && imageRect.width > 0 && createPortal(<>
+        <div
+          className="image-crop-overlay"
+          style={{ left: imageRect.left, top: imageRect.top, width: imageRect.width, height: imageRect.height }}
+          aria-label="图片裁剪区域"
+        >
+          <div
+            className="image-crop-frame"
+            style={{ inset: `${cropInsets.top}% ${cropInsets.right}% ${cropInsets.bottom}% ${cropInsets.left}%` }}
+          >
+            {CROP_HANDLES.map((handle) => (
+              <button
+                key={handle}
+                className={`image-crop-handle ${handle}`}
+                aria-label={`调整裁剪区域：${handle}`}
+                onPointerDown={(event) => beginCropDrag(handle, event)}
+              />
+            ))}
+          </div>
+        </div>
+        <div
+          className="image-crop-actions"
+          style={{
+            left: clamp(imageRect.left + imageRect.width / 2, 98, window.innerWidth - 98),
+            top: imageRect.top + imageRect.height + 52 < window.innerHeight ? imageRect.top + imageRect.height + 10 : Math.max(10, imageRect.top - 48),
+          }}
+          onPointerDown={(event) => event.preventDefault()}
+        >
+          <button disabled={cropBusy} onClick={() => { setCropMode(false); setCropError(""); }}><X size={15} />取消</button>
+          <button className="primary" disabled={cropBusy} onClick={() => void applyImageCrop()}><Check size={15} />{cropBusy ? "处理中…" : "完成裁剪"}</button>
+          {cropError && <span title={cropError}>{cropError}</span>}
+        </div>
+      </>, document.body)}
+
       {selectedText && (
         <div
           className="selection-actions"
           style={{ left: selectionPosition.left, top: selectionPosition.top }}
+          onPointerDown={(event) => event.preventDefault()}
           onMouseDown={(event) => event.preventDefault()}
         >
           <div className="selection-actions-row">
@@ -360,7 +716,9 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
         </div>
       )}
 
-      <EditorContent editor={editor} />
+      <div ref={scrollAreaRef} className="editor-scroll-area" onScroll={limitSelectionAutoScroll}>
+        <EditorContent editor={editor} />
+      </div>
     </div>
   );
 }

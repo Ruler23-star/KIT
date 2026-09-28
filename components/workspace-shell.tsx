@@ -54,6 +54,21 @@ export function WorkspaceShell() {
     window.addEventListener("workspace:changed", refresh);
     return () => window.removeEventListener("workspace:changed", refresh);
   }, [loadData]);
+  useEffect(() => {
+    let timer: number;
+    let cancelled = false;
+    const scheduleNextDayRefresh = () => {
+      const now = new Date();
+      const nextDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+      timer = window.setTimeout(() => {
+        void loadData().catch((error) => setNotice(error.message)).finally(() => {
+          if (!cancelled) scheduleNextDayRefresh();
+        });
+      }, nextDay.getTime() - now.getTime());
+    };
+    scheduleNextDayRefresh();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [loadData]);
 
   const mutate = useCallback<Mutate>(async (entity, action, id, payload = {}) => {
     setSaving(true);
@@ -129,7 +144,7 @@ export function WorkspaceShell() {
 
 function Dashboard({ data, mutate, onOpen, onNavigate }: { data: WorkspaceData; mutate: Mutate; onOpen: (id: string) => void; onNavigate: (view: View) => void }) {
   const [draft, setDraft] = useState("");
-  const todayTodos = data.todos.filter((item) => item.isToday);
+  const todayTodos = data.todos.filter((item) => item.isToday).sort(dailyBriefingLast);
   const completed = todayTodos.filter((item) => item.status === "completed").length;
   const progress = todayTodos.length ? Math.round((completed / todayTodos.length) * 100) : 0;
   const dateText = useMemo(() => new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date()), []);
@@ -218,7 +233,7 @@ function KnowledgeView({ folders, documents, activeDocument, onSelect, onCreate,
       </> : <button className="document-expand-button" onClick={() => toggleDocumentPanel(true)} title="展开知识文档" aria-label="展开知识文档"><PanelLeftOpen size={18} /><span>文档</span></button>}
       {documentPanelOpen && <div className="document-panel-resizer" role="separator" aria-label="调整知识文档区域宽度" aria-orientation="vertical" aria-valuemin={190} aria-valuemax={760} aria-valuenow={Math.round(documentPanelWidth)} tabIndex={0} onPointerDown={beginDocumentPanelResize} onKeyDown={resizeDocumentPanelByKeyboard} />}
     </aside>
-    {activeDocument ? <section className="document-editor-panel"><div className="document-title-row"><DocumentTitleInput value={activeDocument.title} onSave={(title) => onUpdate(activeDocument.id, { title })} /><FolderPicker compact folders={folders} value={activeDocument.folderId} onChange={(folderId) => onUpdate(activeDocument.id, { folderId })} /><span><Clock3 size={14} /> 自动保存</span></div><RichEditor content={activeDocument.content} onChange={(content) => void onUpdate(activeDocument.id, { content })} onCreateIdea={onCreateIdea} onCreateTodo={onCreateTodo} /></section> : <section className="empty-panel"><Empty text="新建一篇知识文档，开始记录。" /><button className="primary-button" onClick={() => onCreate(null)}><Plus size={16} /> 新建文档</button></section>}
+    {activeDocument ? <section className="document-editor-panel"><div className="document-title-row"><DocumentTitleInput value={activeDocument.title} onSave={(title) => onUpdate(activeDocument.id, { title })} /><FolderPicker compact folders={folders} value={activeDocument.folderId} onChange={(folderId) => onUpdate(activeDocument.id, { folderId })} /><span><Clock3 size={14} /> 自动保存</span></div><RichEditor key={activeDocument.id} content={activeDocument.content} onChange={(content) => void onUpdate(activeDocument.id, { content })} onCreateIdea={onCreateIdea} onCreateTodo={onCreateTodo} /></section> : <section className="empty-panel"><Empty text="新建一篇知识文档，开始记录。" /><button className="primary-button" onClick={() => onCreate(null)}><Plus size={16} /> 新建文档</button></section>}
     {activeDocument && <aside className={sourcePanelOpen ? "source-panel" : "source-panel collapsed"}>{sourcePanelOpen ? <><div className="panel-title"><strong>来源与整理</strong><div className="source-panel-actions"><button onClick={() => toggleSourcePanel(false)} title="收起来源与整理" aria-label="收起来源与整理"><PanelRightClose size={16} /></button><button className="danger-icon" onClick={() => onDelete(activeDocument.id)} title="删除文档"><Trash2 size={16} /></button></div></div><FolderPicker folders={folders} value={activeDocument.folderId} onChange={(folderId) => onUpdate(activeDocument.id, { folderId })} /><SourceField label="来源类型" value={activeDocument.sourceType ?? ""} onBlur={(value) => onUpdate(activeDocument.id, { sourceType: value || null })} /><SourceField label="来源名称" value={activeDocument.sourceName ?? ""} onBlur={(value) => onUpdate(activeDocument.id, { sourceName: value || null })} /><SourceField label="URL" value={activeDocument.sourceUrl ?? ""} onBlur={(value) => onUpdate(activeDocument.id, { sourceUrl: value || null })} /><SourceField label="作者" value={activeDocument.author ?? ""} onBlur={(value) => onUpdate(activeDocument.id, { author: value || null })} /><TagEditor tags={activeDocument.aiTags} onChange={(aiTags) => onUpdate(activeDocument.id, { aiTags })} />{activeDocument.aiSummary && <div className="summary-box"><span><Sparkles size={14} /> AI 摘要</span><p>{activeDocument.aiSummary}</p></div>}</> : <button className="source-expand-button" onClick={() => toggleSourcePanel(true)} title="展开来源与整理" aria-label="展开来源与整理"><PanelRightOpen size={18} /><span>来源</span></button>}</aside>}
   </div>;
 }
@@ -385,7 +400,7 @@ function TodosView({ data, activeTodoId, onSelect, mutate }: { data: WorkspaceDa
   const [schedulingTodoId, setSchedulingTodoId] = useState<string | null>(null);
   const [pickerMonth, setPickerMonth] = useState(() => new Date());
   const [draggingTodoId, setDraggingTodoId] = useState<string | null>(null);
-  const visible = data.todos.filter((todo) => filter === "all" || (filter === "today" ? todo.isToday : todo.status === filter));
+  const visible = data.todos.filter((todo) => filter === "all" || (filter === "today" ? todo.isToday : todo.status === filter)).sort(dailyBriefingLast);
   const active = data.todos.find((item) => item.id === activeTodoId) ?? visible[0] ?? null;
   async function addTodo() { const title = draft.trim(); if (!title) return; const created = await mutate("todo", "create", undefined, { title, isToday: filter === "today", priority: "medium" }) as Todo; setDraft(""); onSelect(created.id); }
   async function scheduleTodo(todo: Todo, date: Date) { const target = dateKey(date); onSelect(todo.id); await mutate("todo", "update", todo.id, { scheduledStartDate: target, scheduledTime: null, status: todo.status === "not_started" && target <= dateKey(new Date()) ? "in_progress" : todo.status, isToday: target === dateKey(new Date()) }); }
@@ -421,6 +436,7 @@ function startOfCalendarWeek(date: Date) { const start = new Date(date.getFullYe
 function formatCalendarDate(date: Date) { return `${date.getMonth() + 1}月${date.getDate()}日`; }
 function weekRangeLabel(date: Date) { const start = startOfCalendarWeek(date); const end = addCalendarDays(start, 6); return `${start.getFullYear()}年${start.getMonth() + 1}月${start.getDate()}日 – ${end.getMonth() + 1}月${end.getDate()}日`; }
 function todoCalendarStatus(todo: Todo) { if (!todo.scheduledStartDate) return "unscheduled"; return todo.status; }
+function dailyBriefingLast(left: Todo, right: Todo) { return Number(left.automationKind === "daily_briefing") - Number(right.automationKind === "daily_briefing"); }
 function todoOccursOn(todo: Todo, date: Date) { if (!todo.scheduledStartDate) return false; const key = dateKey(date); const today = dateKey(new Date()); if (key < todo.scheduledStartDate) return false; if (key === todo.scheduledStartDate) return true; if (key > today) return false; if (todo.status === "completed" && todo.completedAt) return key <= dateKey(new Date(todo.completedAt)); return todo.status === "in_progress"; }
 
 function TodoDetail({ todo, data, mutate }: { todo: Todo; data: WorkspaceData; mutate: Mutate }) {

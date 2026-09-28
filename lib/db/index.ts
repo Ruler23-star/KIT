@@ -87,6 +87,10 @@ const todoColumns = sqlite.prepare("PRAGMA table_info(todos)").all() as Array<{ 
 if (!todoColumns.some((column) => column.name === "scheduled_start_date")) sqlite.exec("ALTER TABLE todos ADD COLUMN scheduled_start_date TEXT");
 if (!todoColumns.some((column) => column.name === "scheduled_time")) sqlite.exec("ALTER TABLE todos ADD COLUMN scheduled_time TEXT");
 if (!todoColumns.some((column) => column.name === "scheduled_duration")) sqlite.exec("ALTER TABLE todos ADD COLUMN scheduled_duration INTEGER NOT NULL DEFAULT 60");
+if (!todoColumns.some((column) => column.name === "automation_kind")) sqlite.exec("ALTER TABLE todos ADD COLUMN automation_kind TEXT");
+if (!todoColumns.some((column) => column.name === "automation_date")) sqlite.exec("ALTER TABLE todos ADD COLUMN automation_date TEXT");
+if (!todoColumns.some((column) => column.name === "was_scheduled")) sqlite.exec("ALTER TABLE todos ADD COLUMN was_scheduled INTEGER NOT NULL DEFAULT 0");
+sqlite.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_automation_day ON todos(automation_kind, automation_date) WHERE automation_kind IS NOT NULL AND automation_date IS NOT NULL");
 
 const db = drizzle(sqlite);
 
@@ -218,7 +222,55 @@ function seedIfEmpty() {
 
 seedIfEmpty();
 
+const DAILY_BRIEFING_AUTOMATION = "daily_briefing";
+
+function localDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function maintainDailyBriefingTodo() {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const today = localDateKey(now);
+  const title = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日晨报`;
+
+  const transaction = sqlite.transaction(() => {
+    sqlite.prepare(`
+      DELETE FROM todos
+      WHERE automation_kind = ?
+        AND automation_date < ?
+        AND was_scheduled = 0
+        AND scheduled_start_date IS NULL
+    `).run(DAILY_BRIEFING_AUTOMATION, today);
+
+    sqlite.prepare(`
+      UPDATE todos
+      SET is_today = 0, updated_at = ?
+      WHERE automation_kind = ? AND automation_date < ? AND is_today = 1
+    `).run(nowIso, DAILY_BRIEFING_AUTOMATION, today);
+
+    sqlite.prepare(`
+      INSERT OR IGNORE INTO todos (
+        id, title, description, status, priority, is_today,
+        automation_kind, automation_date, was_scheduled,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, 'not_started', 'medium', 1, ?, ?, 0, ?, ?)
+    `).run(
+      crypto.randomUUID(),
+      title,
+      "每日自动生成；如当天未安排，次日将自动清理。",
+      DAILY_BRIEFING_AUTOMATION,
+      today,
+      nowIso,
+      nowIso,
+    );
+  });
+
+  transaction();
+}
+
 export async function getWorkspaceData(): Promise<WorkspaceData> {
+  maintainDailyBriefingTodo();
   const [folderRows, documentRows, ideaRows, todoRows] = await Promise.all([
     db.select().from(knowledgeFolders).orderBy(knowledgeFolders.name),
     db.select().from(knowledgeDocuments).orderBy(desc(knowledgeDocuments.updatedAt)),
@@ -339,6 +391,9 @@ export async function createTodo(input: Pick<Todo, "title"> & Partial<Todo>) {
     scheduledStartDate: input.scheduledStartDate ?? null,
     scheduledTime: input.scheduledTime ?? null,
     scheduledDuration: input.scheduledDuration ?? 60,
+    automationKind: input.automationKind ?? null,
+    automationDate: input.automationDate ?? null,
+    wasScheduled: input.wasScheduled ?? Boolean(input.scheduledStartDate),
     createdAt: now,
     updatedAt: now,
   };
@@ -351,6 +406,7 @@ export async function updateTodo(id: string, input: Partial<Todo>) {
   for (const key of ["title", "description", "status", "priority", "isToday", "sourceType", "sourceDocumentId", "sourceIdeaId", "sourceQuote", "result", "completedAt", "scheduledStartDate", "scheduledTime", "scheduledDuration"] as const) {
     if (key in input) update[key] = input[key] as never;
   }
+  if (input.scheduledStartDate) update.wasScheduled = true;
   if (input.status === "completed" && !("completedAt" in input)) update.completedAt = new Date().toISOString();
   if (input.status && input.status !== "completed") update.completedAt = null;
   await db.update(todos).set(update).where(eq(todos.id, id));
