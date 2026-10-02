@@ -4,12 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BookOpenText, BrainCircuit, CalendarDays, CalendarPlus, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
-  Circle, Clock3, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, Lightbulb, Link2, LoaderCircle, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, PencilLine, Plus, Search,
+  Circle, Clock3, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, Lightbulb, Link2, LoaderCircle, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, PencilLine, Plus,
   Sparkles, Trash2, X,
 } from "lucide-react";
 import { RichEditor } from "./rich-editor";
 import { WebMcpTools } from "./webmcp-tools";
-import { collectTopTags, stripHtml } from "@/lib/knowledge-utils";
+import { collectTopTags } from "@/lib/knowledge-utils";
 import type { Idea, KnowledgeDocument, KnowledgeFolder, Todo, TodoStatus, WorkspaceData } from "@/types/workspace";
 
 type View = "dashboard" | "knowledge" | "ideas" | "todos" | "framework";
@@ -32,7 +32,8 @@ export function WorkspaceShell() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
-  const [search, setSearch] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarDragging, setSidebarDragging] = useState(false);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [activeTodoId, setActiveTodoId] = useState<string | null>(null);
 
@@ -91,8 +92,25 @@ export function WorkspaceShell() {
     todos: data.todos.filter((item) => item.status !== "completed").length,
     framework: 0,
   };
-  const filteredDocuments = data.documents.filter((item) => `${item.title} ${stripHtml(item.content)}`.toLowerCase().includes(search.toLowerCase()));
   const activeDocument = data.documents.find((item) => item.id === activeDocumentId) ?? null;
+
+  function beginSidebarResize(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setSidebarDragging(true);
+    const startX = event.clientX;
+    let currentX = startX;
+    const resize = (moveEvent: PointerEvent) => { currentX = moveEvent.clientX; };
+    const finish = () => {
+      setSidebarDragging(false);
+      const distance = currentX - startX;
+      if (distance <= -24) setSidebarCollapsed(true);
+      if (distance >= 24) setSidebarCollapsed(false);
+      window.removeEventListener("pointermove", resize);
+      window.removeEventListener("pointerup", finish);
+    };
+    window.addEventListener("pointermove", resize);
+    window.addEventListener("pointerup", finish);
+  }
 
   async function createDocument(folderId: string | null = null) {
     const baseTitle = "未命名知识";
@@ -102,7 +120,6 @@ export function WorkspaceShell() {
     while (existingTitles.has(title)) title = `${baseTitle} ${suffix++}`;
     const created = await mutate("document", "create", undefined, { title, folderId }) as KnowledgeDocument;
     setActiveDocumentId(created.id); setView("knowledge");
-    setNotice("新知识文档已创建，可直接修改标题和正文。");
   }
   async function createIdeaFromQuote(quote: string, documentId?: string) {
     const content = window.prompt("记录由这段内容产生的灵感", "")?.trim();
@@ -113,27 +130,27 @@ export function WorkspaceShell() {
   async function createTodoFromSource(titleSeed: string, source: Partial<Todo> = {}) {
     const title = window.prompt("Todo 标题", titleSeed)?.trim();
     if (!title) return;
-    await mutate("todo", "create", undefined, { title, isToday: true, priority: "medium", ...source });
-    setNotice("Todo 已加入今日任务。");
+    await mutate("todo", "create", undefined, { title, isToday: false, priority: "medium", ...source });
+    setNotice("Todo 已加入全部事项。");
   }
 
   if (loading) return <main className="loading-screen"><LoaderCircle className="spin" /><strong>正在打开本地知识库</strong></main>;
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${sidebarDragging ? "sidebar-dragging" : ""}`} style={{ "--shell-sidebar-width": sidebarCollapsed ? "78px" : "256px" } as React.CSSProperties}>
       <WebMcpTools />
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark"><img src="/kit-icon.png" alt="" /></span><div><img className="brand-wordmark" src="/kit-wordmark-green-large.png" alt="KIT" /><span>knowledge · idea · todo</span></div></div>
-        <label className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} aria-label="搜索" placeholder="搜索全部内容" /></label>
         <nav className="nav-list" aria-label="主要导航">{navItems.map(({ id, label, icon: Icon }) => <button className={view === id ? "nav-item active" : "nav-item"} key={id} onClick={() => setView(id)}><Icon size={19} /><span>{label}</span>{counts[id] > 0 && <span className="nav-count">{counts[id]}</span>}</button>)}</nav>
         <div className="flow-card"><span>核心循环</span><strong>Capture → Organize → Connect → Act → Review</strong><p>{data.todos.filter((item) => item.status !== "completed").length} 项行动正在推动知识继续生长</p></div>
+        <div className="sidebar-resizer" role="separator" aria-label="拖动调整侧栏宽度" aria-orientation="vertical" onPointerDown={beginSidebarResize} />
       </aside>
 
       <section className="workspace">
-        <header className="topbar"><div><span className="eyebrow">个人工作台</span><h1>{navItems.find((item) => item.id === view)?.label}</h1></div><div className="top-actions">{saving && <span className="save-state"><LoaderCircle className="spin" size={15} /> 正在保存</span>}<button className="ghost-button" onClick={() => setView(view === "framework" ? previousNonFrameworkView.current : "framework")}><Sparkles size={17} /> 与 AI 一起梳理</button></div></header>
+        {view === "framework" && <header className="topbar"><div><span className="eyebrow">个人工作台</span><h1>{navItems.find((item) => item.id === view)?.label}</h1></div><div className="top-actions">{saving && <span className="save-state"><LoaderCircle className="spin" size={15} /> 正在保存</span>}<button className="ghost-button" onClick={() => setView(previousNonFrameworkView.current)}><Sparkles size={17} /> 返回工作台</button></div></header>}
         {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")}><X size={15} /></button></div>}
         {view === "dashboard" && <Dashboard data={data} mutate={mutate} onOpen={(id) => { setActiveTodoId(id); setView("todos"); }} onNavigate={setView} />}
-        {view === "knowledge" && <KnowledgeView folders={data.folders} documents={filteredDocuments} activeDocument={activeDocument} onSelect={setActiveDocumentId} onCreate={createDocument} onCreateFolder={(name, parentId) => mutate("folder", "create", undefined, { name, parentId })} onRenameFolder={(id, name) => mutate("folder", "update", id, { name })} onUpdate={(id, payload) => mutate("document", "update", id, payload)} onDelete={async (id) => { const document = data.documents.find((item) => item.id === id); if (window.confirm(`确定删除“${document?.title ?? "这篇知识记录"}”吗？关联内容会保留，但来源将变为空。`)) await mutate("document", "delete", id); }} onCreateIdea={(quote) => createIdeaFromQuote(quote, activeDocument?.id)} onCreateTodo={(quote) => createTodoFromSource(`弄清：${quote.slice(0, 32)}`, { sourceType: "knowledge", sourceDocumentId: activeDocument?.id ?? null, sourceQuote: quote })} />}
+        {view === "knowledge" && <KnowledgeView folders={data.folders} documents={data.documents} activeDocument={activeDocument} onSelect={setActiveDocumentId} onCreate={createDocument} onCreateFolder={(name, parentId) => mutate("folder", "create", undefined, { name, parentId })} onRenameFolder={(id, name) => mutate("folder", "update", id, { name })} onUpdate={(id, payload) => mutate("document", "update", id, payload)} onDelete={async (id) => { const document = data.documents.find((item) => item.id === id); if (window.confirm(`确定删除“${document?.title ?? "这篇知识记录"}”吗？关联内容会保留，但来源将变为空。`)) await mutate("document", "delete", id); }} onCreateIdea={(quote) => createIdeaFromQuote(quote, activeDocument?.id)} onCreateTodo={(quote) => createTodoFromSource(`弄清：${quote.slice(0, 32)}`, { sourceType: "knowledge", sourceDocumentId: activeDocument?.id ?? null, sourceQuote: quote })} />}
         {view === "ideas" && <IdeasView data={data} mutate={mutate} onCreateTodo={createTodoFromSource} />}
         {view === "todos" && <TodosView data={data} activeTodoId={activeTodoId} onSelect={setActiveTodoId} mutate={mutate} />}
         {view === "framework" && <FrameworkView data={data} onNavigate={setView} />}
@@ -149,7 +166,75 @@ function Dashboard({ data, mutate, onOpen, onNavigate }: { data: WorkspaceData; 
   const progress = todayTodos.length ? Math.round((completed / todayTodos.length) * 100) : 0;
   const dateText = useMemo(() => new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date()), []);
   async function addTodo() { const title = draft.trim(); if (!title) return; await mutate("todo", "create", undefined, { title, isToday: true, priority: "medium" }); setDraft(""); }
-  return <div className="dashboard"><section className="today-panel"><div className="date-row"><div><p>{dateText}</p><h2>把今天的思考变成进展</h2></div><div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}><span><strong>{completed}</strong> / {todayTodos.length}</span></div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><div className="quick-add"><Plus size={18} /><input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void addTodo()} placeholder="快速添加一个今日 Todo…" aria-label="新建今日任务" /><button onClick={() => void addTodo()}>添加</button></div><div className="todo-list">{todayTodos.length === 0 && <Empty text="今天还没有任务，可以先记录一个想推进的小行动。" />}{todayTodos.map((todo) => <article className={todo.status === "completed" ? "todo-row done" : "todo-row"} key={todo.id}><button className="check-button" onClick={() => void mutate("todo", "update", todo.id, { status: todo.status === "completed" ? "not_started" : "completed" })}>{todo.status === "completed" ? <Check size={16} /> : <Circle size={18} />}</button><button className="todo-main" onClick={() => onOpen(todo.id)}><strong>{todo.title}</strong>{getSourceLabel(todo, data) && <span>来源 · {getSourceLabel(todo, data)}</span>}</button><ChevronRight size={18} /></article>)}</div></section><aside className="insight-column"><section className="insight-card accent"><div className="section-label"><BrainCircuit size={17} /> 知识线索</div><h3>{topTags(data)[0]?.[0] ?? "开始形成知识主线"}</h3><p>系统会保留知识、灵感和行动的来源关系，帮助你回到问题产生的地方。</p><button onClick={() => onNavigate("framework")}>查看关联内容 <ChevronRight size={16} /></button></section><section className="recent-card"><div className="section-heading"><h3>最近记录</h3><button onClick={() => onNavigate("knowledge")}>全部</button></div>{data.documents.slice(0, 3).map((document) => <div className="recent-item" key={document.id}><BookOpenText size={17} /><div><strong>{document.title}</strong><span>{formatRelative(document.updatedAt)} · 知识</span></div></div>)}</section></aside><section className="module-grid" aria-label="核心模块"><ModuleCard tone="blue" icon={BookOpenText} title="知识记录" detail="继续学习与沉淀" onClick={() => onNavigate("knowledge")} /><ModuleCard tone="amber" icon={Lightbulb} title="灵感记录" detail="捕捉突然出现的想法" onClick={() => onNavigate("ideas")} /><ModuleCard tone="green" icon={CheckCircle2} title="Todo" detail="从想法推进到行动" onClick={() => onNavigate("todos")} /><ModuleCard tone="violet" icon={BrainCircuit} title="知识框架梳理" detail="发现联系、缺口与新问题" onClick={() => onNavigate("framework")} /></section></div>;
+  return <div className="dashboard"><section className="today-panel"><div className="date-row"><p>{dateText}</p><div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}><span><strong>{completed}</strong> / {todayTodos.length}</span></div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><div className="quick-add"><Plus size={18} /><input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void addTodo()} placeholder="快速添加一个今日 Todo…" aria-label="新建今日任务" /><button onClick={() => void addTodo()}>添加</button></div><div className="todo-list">{todayTodos.length === 0 && <Empty text="今天还没有任务，可以先记录一个想推进的小行动。" />}{todayTodos.map((todo) => <article className={todo.status === "completed" ? "todo-row done" : "todo-row"} key={todo.id}><button className="check-button" onClick={() => void mutate("todo", "update", todo.id, { status: todo.status === "completed" ? "not_started" : "completed" })}>{todo.status === "completed" ? <Check size={16} /> : <Circle size={18} />}</button><button className="todo-main" onClick={() => onOpen(todo.id)}><strong>{todo.title}</strong>{getSourceLabel(todo, data) && <span>来源 · {getSourceLabel(todo, data)}</span>}</button><ChevronRight size={18} /></article>)}</div></section><DashboardMonthCalendar todos={data.todos} /><section className="module-grid" aria-label="核心模块"><ModuleCard tone="blue" icon={BookOpenText} title="知识记录" detail="继续学习与沉淀" onClick={() => onNavigate("knowledge")} /><ModuleCard tone="amber" icon={Lightbulb} title="灵感记录" detail="捕捉突然出现的想法" onClick={() => onNavigate("ideas")} /><ModuleCard tone="green" icon={CheckCircle2} title="Todo" detail="从想法推进到行动" onClick={() => onNavigate("todos")} /><ModuleCard tone="violet" icon={BrainCircuit} title="知识框架梳理" detail="发现联系、缺口与新问题" onClick={() => onNavigate("framework")} /></section></div>;
+}
+
+function DashboardMonthCalendar({ todos }: { todos: Todo[] }) {
+  const [month, setMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const gridStart = startOfCalendarWeek(first);
+  const days = Array.from({ length: 42 }, (_, index) => addCalendarDays(gridStart, index));
+  return <section className="dashboard-month-calendar"><header><div><span className="eyebrow">Calendar</span><h3>{month.getFullYear()}年{month.getMonth() + 1}月</h3></div><div><button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} aria-label="上个月"><ChevronLeft size={18} /></button><button className="calendar-current-month" onClick={() => { const now = new Date(); setMonth(new Date(now.getFullYear(), now.getMonth(), 1)); }}>今天</button><button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} aria-label="下个月"><ChevronRight size={18} /></button></div></header><div className="dashboard-calendar-weekdays">{"一二三四五六日".split("").map((day) => <span key={day}>周{day}</span>)}</div><div className="dashboard-calendar-grid">{days.map((day) => { const dayTodos = todos.filter((todo) => todoOccursOn(todo, day)).sort(completedTodosFirst); const annotations = calendarAnnotations(day); const artTheme = calendarArtTheme(annotations); const outside = day.getMonth() !== month.getMonth(); const today = dateKey(day) === dateKey(new Date()); return <div className={`${outside ? "outside" : ""} ${today ? "today" : ""} ${artTheme ? `has-calendar-art calendar-art-${artTheme}` : ""}`} key={dateKey(day)}><div className="dashboard-calendar-date"><strong>{day.getDate()}</strong><span>{annotations.map((annotation) => <em className={annotation.kind} key={`${annotation.kind}-${annotation.label}`}>{annotation.label}</em>)}</span></div>{dayTodos.length > 0 && <div className="dashboard-calendar-tasks">{dayTodos.map((todo) => <i className={todoCalendarStatus(todo)} title={`${todo.title} · ${statusLabel(todo.status)}`} key={todo.id} />)}</div>}</div>; })}</div></section>;
+}
+
+type CalendarAnnotation = { kind: "holiday" | "solar-term"; label: string };
+
+type CalendarArtTheme = "new-year" | "new-years-eve" | "spring-festival" | "lantern-festival" | "qingming" | "labor-day" | "dragon-boat" | "mid-autumn" | "national-day" | "winter-solstice" | `term-${number}`;
+
+const solarTermNames = ["小寒", "大寒", "立春", "雨水", "惊蛰", "春分", "清明", "谷雨", "立夏", "小满", "芒种", "夏至", "小暑", "大暑", "立秋", "处暑", "白露", "秋分", "寒露", "霜降", "立冬", "小雪", "大雪", "冬至"];
+const solarTermMinutes = [0, 21208, 42467, 63836, 85337, 107014, 128867, 150921, 173149, 195551, 218072, 240693, 263343, 285989, 308563, 331033, 353350, 375494, 397447, 419210, 440795, 462224, 483532, 504758];
+const chineseCalendarFormatter = new Intl.DateTimeFormat("zh-CN-u-ca-chinese", { month: "long", day: "numeric" });
+
+function calendarArtTheme(annotations: CalendarAnnotation[]): CalendarArtTheme | null {
+  const labels = new Set(annotations.map((item) => item.label));
+  if (labels.has("国庆节")) return "national-day";
+  if (labels.has("中秋节")) return "mid-autumn";
+  if (labels.has("清明节") || labels.has("清明")) return "qingming";
+  if (labels.has("除夕")) return "new-years-eve";
+  if (labels.has("春节")) return "spring-festival";
+  if (labels.has("元宵节")) return "lantern-festival";
+  if (labels.has("端午节")) return "dragon-boat";
+  if (labels.has("劳动节")) return "labor-day";
+  if (labels.has("元旦")) return "new-year";
+  if (labels.has("冬至")) return "winter-solstice";
+  const term = annotations.find((item) => item.kind === "solar-term")?.label;
+  const termIndex = term ? solarTermNames.indexOf(term) : -1;
+  if (termIndex >= 0) return `term-${termIndex}`;
+  return null;
+}
+
+function calendarAnnotations(date: Date): CalendarAnnotation[] {
+  const annotations: CalendarAnnotation[] = [];
+  const fixedHoliday = ({ "01-01": "元旦", "05-01": "劳动节", "10-01": "国庆节" } as Record<string, string>)[dateKey(date).slice(5)];
+  if (fixedHoliday) annotations.push({ kind: "holiday", label: fixedHoliday });
+  const lunar = chineseCalendarParts(date);
+  const lunarHoliday = ({ "正月-1": "春节", "正月-15": "元宵节", "五月-5": "端午节", "八月-15": "中秋节" } as Record<string, string>)[`${lunar.month}-${lunar.day}`];
+  if (lunarHoliday) annotations.push({ kind: "holiday", label: lunarHoliday });
+  const tomorrowLunar = chineseCalendarParts(addCalendarDays(date, 1));
+  if (tomorrowLunar.month === "正月" && tomorrowLunar.day === "1") annotations.push({ kind: "holiday", label: "除夕" });
+  const solarTerm = solarTermOn(date);
+  if (solarTerm) {
+    if (solarTerm === "清明" && !annotations.some((item) => item.label === "清明节")) annotations.push({ kind: "holiday", label: "清明节" });
+    annotations.push({ kind: "solar-term", label: solarTerm });
+  }
+  return annotations;
+}
+
+function chineseCalendarParts(date: Date) {
+  const parts = chineseCalendarFormatter.formatToParts(date);
+  return { month: parts.find((part) => part.type === "month")?.value ?? "", day: parts.find((part) => part.type === "day")?.value ?? "" };
+}
+
+function solarTermOn(date: Date) {
+  const year = date.getFullYear();
+  const base = Date.UTC(1900, 0, 6, 2, 5);
+  for (let index = 0; index < solarTermNames.length; index += 1) {
+    const instant = base + 31_556_925_974.7 * (year - 1900) + solarTermMinutes[index] * 60_000;
+    const termTime = new Date(instant);
+    const termKey = `${termTime.getUTCFullYear()}-${String(termTime.getUTCMonth() + 1).padStart(2, "0")}-${String(termTime.getUTCDate()).padStart(2, "0")}`;
+    if (termKey === dateKey(date)) return solarTermNames[index];
+  }
+  return null;
 }
 
 function ModuleCard({ tone, icon: Icon, title, detail, onClick }: { tone: string; icon: typeof BookOpenText; title: string; detail: string; onClick: () => void }) { return <button className={`module-card ${tone}`} onClick={onClick}><Icon /><span><strong>{title}</strong><small>{detail}</small></span><ChevronRight /></button>; }
@@ -263,7 +348,7 @@ function DocumentTreeItem({ document, active, onSelect, onDelete }: { document: 
     tooltipTimerRef.current = null;
     setTooltipPosition(null);
   }
-  return <><div className={active ? "document-item-row active" : "document-item-row"}><button ref={titleButtonRef} className="document-item" onMouseEnter={queueTitleTooltip} onMouseLeave={hideTitleTooltip} onFocus={queueTitleTooltip} onBlur={hideTitleTooltip} onClick={() => onSelect(document.id)}><FileText size={16} /><span><strong>{document.title}</strong><small>{formatRelative(document.updatedAt)}</small></span></button><button className="document-delete" title={`删除文档：${document.title}`} aria-label={`删除文档：${document.title}`} onClick={() => onDelete(document.id)}><Trash2 size={14} /></button></div>{tooltipPosition && createPortal(<div className="document-title-tooltip" role="tooltip" style={{ left: tooltipPosition.left, top: tooltipPosition.top, width: tooltipPosition.width }}>{document.title}</div>, globalThis.document.body)}</>;
+  return <><div className={active ? "document-item-row active" : "document-item-row"}><button ref={titleButtonRef} className="document-item" onMouseEnter={queueTitleTooltip} onMouseLeave={hideTitleTooltip} onFocus={queueTitleTooltip} onBlur={hideTitleTooltip} onClick={() => onSelect(document.id)}><FileText size={16} /><span><strong>{document.title}</strong>{document.aiTags.length > 0 && <small title={document.aiTags.map((tag) => `#${tag}`).join(" · ")}>{document.aiTags.map((tag) => `#${tag}`).join(" · ")}</small>}</span></button><button className="document-delete" title={`删除文档：${document.title}`} aria-label={`删除文档：${document.title}`} onClick={() => onDelete(document.id)}><Trash2 size={14} /></button></div>{tooltipPosition && createPortal(<div className="document-title-tooltip" role="tooltip" style={{ left: tooltipPosition.left, top: tooltipPosition.top, width: tooltipPosition.width }}>{document.title}</div>, globalThis.document.body)}</>;
 }
 
 function FolderTreeNode({ folder, folders, documents, activeDocumentId, onSelect, onDelete, onRenameFolder, onCreateDocument, onCreateChild }: { folder: KnowledgeFolder; folders: KnowledgeFolder[]; documents: KnowledgeDocument[]; activeDocumentId: string | null; onSelect: (id: string) => void; onDelete: (id: string) => void; onRenameFolder: (id: string, name: string) => Promise<unknown>; onCreateDocument: (folderId: string) => void; onCreateChild: (parentId: string) => void }) {
@@ -400,23 +485,27 @@ function TodosView({ data, activeTodoId, onSelect, mutate }: { data: WorkspaceDa
   const [schedulingTodoId, setSchedulingTodoId] = useState<string | null>(null);
   const [pickerMonth, setPickerMonth] = useState(() => new Date());
   const [draggingTodoId, setDraggingTodoId] = useState<string | null>(null);
-  const visible = data.todos.filter((todo) => filter === "all" || (filter === "today" ? todo.isToday : todo.status === filter)).sort(dailyBriefingLast);
+  const [dragSource, setDragSource] = useState<"library" | "calendar" | null>(null);
+  const [libraryDropActive, setLibraryDropActive] = useState(false);
+  const visible = data.todos.filter((todo) => filter === "all" || (filter === "today" ? todo.isToday : todo.status === filter)).sort(libraryTodoOrder);
   const active = data.todos.find((item) => item.id === activeTodoId) ?? visible[0] ?? null;
   async function addTodo() { const title = draft.trim(); if (!title) return; const created = await mutate("todo", "create", undefined, { title, isToday: filter === "today", priority: "medium" }) as Todo; setDraft(""); onSelect(created.id); }
   async function scheduleTodo(todo: Todo, date: Date) { const target = dateKey(date); onSelect(todo.id); await mutate("todo", "update", todo.id, { scheduledStartDate: target, scheduledTime: null, status: todo.status === "not_started" && target <= dateKey(new Date()) ? "in_progress" : todo.status, isToday: target === dateKey(new Date()) }); }
-  async function unscheduleTodo(todo: Todo) { await mutate("todo", "update", todo.id, { scheduledStartDate: null, scheduledTime: null, status: todo.status === "completed" ? "completed" : "not_started", isToday: false }); setDraggingTodoId(null); }
+  function finishDrag() { setDraggingTodoId(null); setDragSource(null); setLibraryDropActive(false); }
+  async function unscheduleTodo(todo: Todo) { await mutate("todo", "update", todo.id, { scheduledStartDate: null, scheduledTime: null, status: "not_started", isToday: false }); finishDrag(); }
   async function deleteTodo(todo: Todo) { if (window.confirm(`彻底删除任务“${todo.title}”？`)) await mutate("todo", "delete", todo.id); }
-  function beginDrag(event: React.DragEvent, todo: Todo) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", todo.id); setDraggingTodoId(todo.id); }
-  async function dropOnDate(event: React.DragEvent, date: Date) { event.preventDefault(); const id = event.dataTransfer.getData("text/plain") || draggingTodoId; const todo = data.todos.find((item) => item.id === id); if (todo) await scheduleTodo(todo, date); setDraggingTodoId(null); }
+  function beginDrag(event: React.DragEvent, todo: Todo, source: "library" | "calendar") { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", todo.id); event.dataTransfer.setData("application/x-kit-todo-source", source); setDraggingTodoId(todo.id); setDragSource(source); }
+  async function dropOnDate(event: React.DragEvent, date: Date) { event.preventDefault(); const id = event.dataTransfer.getData("text/plain") || draggingTodoId; const todo = data.todos.find((item) => item.id === id); if (todo) await scheduleTodo(todo, date); finishDrag(); }
+  async function dropOnLibrary(event: React.DragEvent) { event.preventDefault(); const id = event.dataTransfer.getData("text/plain") || draggingTodoId; const source = event.dataTransfer.getData("application/x-kit-todo-source") || dragSource; const todo = data.todos.find((item) => item.id === id && item.scheduledStartDate); if (source === "calendar" && todo) await unscheduleTodo(todo); else finishDrag(); }
   function moveCalendar(direction: number) { setAnchorDate((date) => calendarMode === "week" ? addCalendarDays(date, direction * 7) : new Date(date.getFullYear(), date.getMonth() + direction, 1)); }
   const schedulingTodo = data.todos.find((todo) => todo.id === schedulingTodoId) ?? null;
-  const draggingScheduledTodo = data.todos.find((todo) => todo.id === draggingTodoId && todo.scheduledStartDate) ?? null;
-  return <div className="todo-calendar-page"><section className="todo-calendar-library"><div className="todo-calendar-library-heading"><div><span className="eyebrow">Task Library</span><h2>所有待办</h2></div><strong>{data.todos.filter((todo) => todo.status !== "completed").length}</strong></div><div className="filter-tabs">{(["all", "today", "in_progress", "completed"] as const).map((id) => <button className={filter === id ? "active" : ""} key={id} onClick={() => setFilter(id)}>{({ all: "全部", today: "今天", in_progress: "进行中", completed: "已完成" })[id]}</button>)}</div><div className="quick-add"><Plus size={18} /><input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void addTodo()} placeholder="新建任务…" /><button onClick={() => void addTodo()}>添加</button></div><div className="calendar-task-list">{visible.map((todo) => <article draggable key={todo.id} className={`${todo.status === "completed" ? "calendar-task-card completed" : "calendar-task-card"} ${active?.id === todo.id ? "active" : ""}`} onClick={() => onSelect(todo.id)} onDragStart={(event) => beginDrag(event, todo)} onDragEnd={() => setDraggingTodoId(null)}><span className={`status-dot ${todoCalendarStatus(todo)}`} /><div><strong>{todo.title}</strong><p>{todo.description || "拖到右侧日期，或点击日历按钮安排"}</p><small>{todo.scheduledStartDate ? `${statusLabel(todo.status)} · 已安排 ${formatCalendarDate(parseDateKey(todo.scheduledStartDate))}` : "未安排"}</small></div><div className="calendar-task-actions"><button title="编辑任务" aria-label="编辑任务" onClick={(event) => { event.stopPropagation(); onSelect(todo.id); setDetailOpen(true); }}><PencilLine size={15} /></button><button title="选择安排日期" aria-label="选择安排日期" onClick={(event) => { event.stopPropagation(); setSchedulingTodoId(todo.id); setPickerMonth(todo.scheduledStartDate ? parseDateKey(todo.scheduledStartDate) : new Date()); }}><CalendarPlus size={16} /></button><button className="delete-task-button" title="彻底删除任务" aria-label="彻底删除任务" onClick={(event) => { event.stopPropagation(); void deleteTodo(todo); }}><Trash2 size={15} /></button></div></article>)}</div></section><section className="task-calendar-panel"><header className="calendar-header"><div><span className="eyebrow">Calendar</span><h2>任务日历</h2></div><div className="calendar-header-controls"><div className="calendar-mode-switch"><button className={calendarMode === "week" ? "active" : ""} onClick={() => setCalendarMode("week")}>周</button><button className={calendarMode === "month" ? "active" : ""} onClick={() => setCalendarMode("month")}>月</button></div><button className="calendar-nav-button" onClick={() => moveCalendar(-1)} aria-label="上一时间段"><ChevronLeft size={18} /></button><strong className={calendarMode === "month" ? "month-title" : "week-title"}>{calendarMode === "week" ? weekRangeLabel(anchorDate) : `${anchorDate.getFullYear()}年${anchorDate.getMonth() + 1}月`}</strong><button className="calendar-nav-button" onClick={() => moveCalendar(1)} aria-label="下一时间段"><ChevronRight size={18} /></button><button className="calendar-today-button" onClick={() => setAnchorDate(new Date())}>今天</button></div></header>{calendarMode === "week" ? <TodoWeekCalendar todos={data.todos} anchorDate={anchorDate} onOpen={(id) => { onSelect(id); setDetailOpen(true); }} onDropDate={(event, date) => void dropOnDate(event, date)} onDragStart={beginDrag} onDragEnd={() => setDraggingTodoId(null)} /> : <TodoMonthCalendar todos={data.todos} anchorDate={anchorDate} onSelectDate={(date) => { setAnchorDate(date); setCalendarMode("week"); }} />}{draggingScheduledTodo && <div className="calendar-unschedule-zone" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => { event.preventDefault(); void unscheduleTodo(draggingScheduledTodo); }}><Trash2 size={22} /><strong>拖到这里取消任务安排</strong><span>任务仍会保留在左侧列表</span></div>}</section>{detailOpen && active && <div className="calendar-detail-backdrop" onMouseDown={() => setDetailOpen(false)}><div className="calendar-detail-dialog" onMouseDown={(event) => event.stopPropagation()}><button className="calendar-detail-close" onClick={() => setDetailOpen(false)} aria-label="关闭任务详情"><X size={18} /></button><TodoDetail todo={active} data={data} mutate={mutate} /></div></div>}{schedulingTodo && <TodoDatePicker todo={schedulingTodo} month={pickerMonth} onMonthChange={setPickerMonth} onClose={() => setSchedulingTodoId(null)} onPick={(date) => { void scheduleTodo(schedulingTodo, date); setSchedulingTodoId(null); }} />}</div>;
+  const draggingScheduledTodo = dragSource === "calendar" ? data.todos.find((todo) => todo.id === draggingTodoId && todo.scheduledStartDate) ?? null : null;
+  return <div className="todo-calendar-page"><section className={`todo-calendar-library ${draggingScheduledTodo ? "calendar-drop-target" : ""} ${libraryDropActive ? "drop-active" : ""}`} onDragOver={(event) => { if (!draggingScheduledTodo) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; setLibraryDropActive(true); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setLibraryDropActive(false); }} onDrop={(event) => void dropOnLibrary(event)}>{draggingScheduledTodo && <div className="library-unschedule-hint"><PanelLeftOpen size={18} /><strong>放回任务库，取消日程安排</strong><span>松开后变为灰色“未安排”</span></div>}<div className="todo-calendar-library-heading"><div><span className="eyebrow">Task Library</span><h2>所有待办</h2></div><strong>{data.todos.filter((todo) => todo.status !== "completed").length}</strong></div><div className="filter-tabs">{(["all", "today", "in_progress", "completed"] as const).map((id) => <button className={filter === id ? "active" : ""} key={id} onClick={() => setFilter(id)}>{({ all: "全部", today: "今天", in_progress: "进行中", completed: "已完成" })[id]}</button>)}</div><div className="quick-add"><Plus size={18} /><input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void addTodo()} placeholder="新建任务…" /><button onClick={() => void addTodo()}>添加</button></div><div className="calendar-task-list">{visible.map((todo) => <article draggable key={todo.id} className={`${todo.status === "completed" ? "calendar-task-card completed" : "calendar-task-card"} ${active?.id === todo.id ? "active" : ""}`} onClick={() => { onSelect(todo.id); setDetailOpen(true); }} onDragStart={(event) => beginDrag(event, todo, "library")} onDragEnd={finishDrag}><span className={`status-dot ${todoCalendarStatus(todo)}`} /><div><strong>{todo.title}</strong><p>{todo.description || "拖到右侧日期，或点击日历按钮安排"}</p><small>{todo.scheduledStartDate ? `${statusLabel(todo.status)} · 已安排 ${formatCalendarDate(parseDateKey(todo.scheduledStartDate))}` : "未安排"}</small></div><div className="calendar-task-actions"><button title="选择安排日期" aria-label="选择安排日期" onClick={(event) => { event.stopPropagation(); setSchedulingTodoId(todo.id); setPickerMonth(todo.scheduledStartDate ? parseDateKey(todo.scheduledStartDate) : new Date()); }}><CalendarPlus size={16} /></button><button className="delete-task-button" title="彻底删除任务" aria-label="彻底删除任务" onClick={(event) => { event.stopPropagation(); void deleteTodo(todo); }}><Trash2 size={15} /></button></div></article>)}</div></section><section className="task-calendar-panel"><header className="calendar-header"><div><span className="eyebrow">Calendar</span><h2>任务日历</h2></div><div className="calendar-header-controls"><div className="calendar-mode-switch"><button className={calendarMode === "week" ? "active" : ""} onClick={() => setCalendarMode("week")}>周</button><button className={calendarMode === "month" ? "active" : ""} onClick={() => setCalendarMode("month")}>月</button></div><button className="calendar-nav-button" onClick={() => moveCalendar(-1)} aria-label="上一时间段"><ChevronLeft size={18} /></button><strong className={calendarMode === "month" ? "month-title" : "week-title"}>{calendarMode === "week" ? weekRangeLabel(anchorDate) : `${anchorDate.getFullYear()}年${anchorDate.getMonth() + 1}月`}</strong><button className="calendar-nav-button" onClick={() => moveCalendar(1)} aria-label="下一时间段"><ChevronRight size={18} /></button><button className="calendar-today-button" onClick={() => setAnchorDate(new Date())}>今天</button></div></header>{calendarMode === "week" ? <TodoWeekCalendar todos={data.todos} anchorDate={anchorDate} onOpen={(id) => { onSelect(id); setDetailOpen(true); }} onDropDate={(event, date) => void dropOnDate(event, date)} onDragStart={(event, todo) => beginDrag(event, todo, "calendar")} onDragEnd={finishDrag} /> : <TodoMonthCalendar todos={data.todos} anchorDate={anchorDate} onSelectDate={(date) => { setAnchorDate(date); setCalendarMode("week"); }} />}{draggingScheduledTodo && <div className="calendar-unschedule-zone" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => { event.preventDefault(); void unscheduleTodo(draggingScheduledTodo); }}><Trash2 size={22} /><strong>拖到这里取消任务安排</strong><span>任务仍会保留在左侧列表</span></div>}</section>{detailOpen && active && <div className="calendar-detail-backdrop" onMouseDown={() => setDetailOpen(false)}><div className="calendar-detail-dialog" onMouseDown={(event) => event.stopPropagation()}><button className="calendar-detail-close" onClick={() => setDetailOpen(false)} aria-label="关闭任务详情"><X size={18} /></button><TodoDetail todo={active} data={data} mutate={mutate} /></div></div>}{schedulingTodo && <TodoDatePicker todo={schedulingTodo} month={pickerMonth} onMonthChange={setPickerMonth} onClose={() => setSchedulingTodoId(null)} onPick={(date) => { void scheduleTodo(schedulingTodo, date); setSchedulingTodoId(null); }} />}</div>;
 }
 
 function TodoWeekCalendar({ todos, anchorDate, onOpen, onDropDate, onDragStart, onDragEnd }: { todos: Todo[]; anchorDate: Date; onOpen: (id: string) => void; onDropDate: (event: React.DragEvent, date: Date) => void; onDragStart: (event: React.DragEvent, todo: Todo) => void; onDragEnd: () => void }) {
   const weekStart = startOfCalendarWeek(anchorDate); const days = Array.from({ length: 7 }, (_, index) => addCalendarDays(weekStart, index));
-  return <div className="week-calendar"><div className="week-calendar-head">{days.map((day) => <div className={dateKey(day) === dateKey(new Date()) ? "today" : ""} key={dateKey(day)}><b>{`周${"一二三四五六日"[(day.getDay() + 6) % 7]}`}</b><strong>{day.getFullYear()}年{day.getMonth() + 1}月{day.getDate()}日</strong></div>)}</div><div className="week-calendar-body">{days.map((day) => { const dayTodos = todos.filter((todo) => todoOccursOn(todo, day)); return <div className="week-day-column" key={dateKey(day)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => onDropDate(event, day)}>{dayTodos.map((todo) => <button draggable key={todo.id} className={`week-task-event ${todoCalendarStatus(todo)}`} onClick={() => onOpen(todo.id)} onDragStart={(event) => onDragStart(event, todo)} onDragEnd={onDragEnd}><strong>{todo.title}</strong><span>{statusLabel(todo.status)}</span>{todo.status === "in_progress" && dateKey(day) !== todo.scheduledStartDate && <small>今日自动延续</small>}</button>)}{dayTodos.length === 0 && <span className="week-day-empty">拖入任务</span>}</div>; })}</div></div>;
+  return <div className="week-calendar"><div className="week-calendar-head">{days.map((day) => <div className={dateKey(day) === dateKey(new Date()) ? "today" : ""} key={dateKey(day)}><b>{`周${"一二三四五六日"[(day.getDay() + 6) % 7]}`}</b><strong>{day.getFullYear()}年{day.getMonth() + 1}月{day.getDate()}日</strong></div>)}</div><div className="week-calendar-body">{days.map((day) => { const dayTodos = todos.filter((todo) => todoOccursOn(todo, day)).sort(completedTodosFirst); return <div className="week-day-column" key={dateKey(day)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => onDropDate(event, day)}>{dayTodos.map((todo) => <button draggable key={todo.id} className={`week-task-event ${todoCalendarStatus(todo)}`} onClick={() => onOpen(todo.id)} onDragStart={(event) => onDragStart(event, todo)} onDragEnd={onDragEnd}><strong>{todo.title}</strong><span>{statusLabel(todo.status)}</span>{todo.status === "in_progress" && dateKey(day) !== todo.scheduledStartDate && <small>今日自动延续</small>}</button>)}{dayTodos.length === 0 && <span className="week-day-empty">拖入任务</span>}</div>; })}</div></div>;
 }
 
 function TodoMonthCalendar({ todos, anchorDate, onSelectDate }: { todos: Todo[]; anchorDate: Date; onSelectDate: (date: Date) => void }) {
@@ -437,17 +526,46 @@ function formatCalendarDate(date: Date) { return `${date.getMonth() + 1}月${dat
 function weekRangeLabel(date: Date) { const start = startOfCalendarWeek(date); const end = addCalendarDays(start, 6); return `${start.getFullYear()}年${start.getMonth() + 1}月${start.getDate()}日 – ${end.getMonth() + 1}月${end.getDate()}日`; }
 function todoCalendarStatus(todo: Todo) { if (!todo.scheduledStartDate) return "unscheduled"; return todo.status; }
 function dailyBriefingLast(left: Todo, right: Todo) { return Number(left.automationKind === "daily_briefing") - Number(right.automationKind === "daily_briefing"); }
+function libraryTodoOrder(left: Todo, right: Todo) { const completionOrder = Number(left.status === "completed") - Number(right.status === "completed"); return completionOrder || dailyBriefingLast(left, right); }
+function completedTodosFirst(left: Todo, right: Todo) { return Number(right.status === "completed") - Number(left.status === "completed"); }
 function todoOccursOn(todo: Todo, date: Date) { if (!todo.scheduledStartDate) return false; const key = dateKey(date); const today = dateKey(new Date()); if (key < todo.scheduledStartDate) return false; if (key === todo.scheduledStartDate) return true; if (key > today) return false; if (todo.status === "completed" && todo.completedAt) return key <= dateKey(new Date(todo.completedAt)); return todo.status === "in_progress"; }
 
 function TodoDetail({ todo, data, mutate }: { todo: Todo; data: WorkspaceData; mutate: Mutate }) {
-  const [result, setResult] = useState(todo.result ?? ""); useEffect(() => setResult(todo.result ?? ""), [todo.id, todo.result]);
+  const [description, setDescription] = useState(todo.description ?? "");
+  const [result, setResult] = useState(todo.result ?? "");
+  const composingRef = useRef(false);
+  const latestDraftRef = useRef({ description: todo.description ?? "", result: todo.result ?? "" });
+  const savedDraftRef = useRef({ description: todo.description ?? "", result: todo.result ?? "" });
+  useEffect(() => {
+    const next = { description: todo.description ?? "", result: todo.result ?? "" };
+    setDescription(next.description);
+    setResult(next.result);
+    latestDraftRef.current = next;
+    savedDraftRef.current = next;
+  }, [todo.id]);
+  useEffect(() => { latestDraftRef.current = { description, result }; }, [description, result]);
+  const saveDrafts = useCallback(async () => {
+    const draft = latestDraftRef.current;
+    const saved = savedDraftRef.current;
+    if (draft.description === saved.description && draft.result === saved.result) return;
+    try {
+      await mutate("todo", "update", todo.id, draft);
+      savedDraftRef.current = draft;
+    } catch { /* mutate 已负责显示保存错误，保留本地草稿供下次重试 */ }
+  }, [mutate, todo.id]);
+  useEffect(() => {
+    if (composingRef.current) return;
+    if (description === savedDraftRef.current.description && result === savedDraftRef.current.result) return;
+    const timer = window.setTimeout(() => { void saveDrafts(); }, 700);
+    return () => window.clearTimeout(timer);
+  }, [description, result, saveDrafts]);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(todo.title);
   useEffect(() => { setTitleDraft(todo.title); setEditingTitle(false); }, [todo.id, todo.title]);
   const sourceDocument = data.documents.find((item) => item.id === todo.sourceDocumentId); const sourceIdea = data.ideas.find((item) => item.id === todo.sourceIdeaId);
   async function writeBack() { if (!sourceDocument || !result.trim()) return; const appended = `${sourceDocument.content}<hr><h2>任务结论：${escapeText(todo.title)}</h2><p>${escapeText(result).replace(/\n/g, "<br>")}</p>`; await mutate("document", "update", sourceDocument.id, { content: appended }); window.alert("结果已回写到原知识记录。"); }
   async function saveTitle() { const title = titleDraft.trim(); if (!title) return; await mutate("todo", "update", todo.id, { title }); setEditingTitle(false); }
-  return <section className="todo-detail"><div className="detail-header"><div className="detail-heading"><span className={`status-pill ${todo.status}`}>{statusLabel(todo.status)}</span>{editingTitle ? <div className="todo-title-editor"><input autoFocus value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) void saveTitle(); if (event.key === "Escape") { setTitleDraft(todo.title); setEditingTitle(false); } }} aria-label="修改 Todo 标题" /><div><button className="primary-button" disabled={!titleDraft.trim()} onClick={() => void saveTitle()}><Check size={14} /> 保存</button><button className="secondary-button" onClick={() => { setTitleDraft(todo.title); setEditingTitle(false); }}><X size={14} /> 取消</button></div></div> : <h2>{todo.title}</h2>}</div><div className="detail-header-actions">{!editingTitle && <button className="edit-title-button" onClick={() => setEditingTitle(true)}><PencilLine size={16} /> 修改</button>}<button className="danger-icon" title="删除 Todo" onClick={() => window.confirm("删除这个 Todo？") && void mutate("todo", "delete", todo.id)}><Trash2 size={17} /></button></div></div><label className="detail-field"><span>描述</span><textarea defaultValue={todo.description} onBlur={(event) => void mutate("todo", "update", todo.id, { description: event.target.value })} /></label><div className="detail-grid"><label className="detail-field"><span>状态</span><select value={todo.status} onChange={(event) => void mutate("todo", "update", todo.id, { status: event.target.value })}><option value="not_started">未开始</option><option value="in_progress">进行中</option><option value="completed">已完成</option></select></label><label className="switch-field"><input type="checkbox" checked={todo.isToday} onChange={(event) => void mutate("todo", "update", todo.id, { isToday: event.target.checked })} /><span>加入今日任务</span></label></div>{(sourceIdea || sourceDocument || todo.sourceQuote) && <div className="provenance-card"><strong><Link2 size={15} /> 为什么产生这个任务</strong>{sourceIdea && <p>灵感：{sourceIdea.title}</p>}{sourceDocument && <p>知识：{sourceDocument.title}</p>}{todo.sourceQuote && <blockquote>“{todo.sourceQuote}”</blockquote>}</div>}<label className="detail-field result-field"><span>任务结果 / 结论</span><textarea value={result} onChange={(event) => setResult(event.target.value)} placeholder="完成后，把得到的结论写在这里…" /></label><div className="detail-actions"><button className="primary-button" onClick={() => void mutate("todo", "update", todo.id, { result, status: "completed" })}><Check size={16} /> 保存并完成</button>{sourceDocument && <button className="secondary-button" disabled={!result.trim()} onClick={() => void writeBack()}><BookOpenText size={16} /> 回写原知识</button>}</div></section>;
+  return <section className="todo-detail"><div className="detail-header"><div className="detail-heading"><span className={`status-pill ${todo.status}`}>{statusLabel(todo.status)}</span>{editingTitle ? <div className="todo-title-editor"><input autoFocus value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) void saveTitle(); if (event.key === "Escape") { setTitleDraft(todo.title); setEditingTitle(false); } }} aria-label="修改 Todo 标题" /><div><button className="primary-button" disabled={!titleDraft.trim()} onClick={() => void saveTitle()}><Check size={14} /> 保存</button><button className="secondary-button" onClick={() => { setTitleDraft(todo.title); setEditingTitle(false); }}><X size={14} /> 取消</button></div></div> : <h2>{todo.title}</h2>}</div><div className="detail-header-actions">{!editingTitle && <button className="edit-title-button" onClick={() => setEditingTitle(true)}><PencilLine size={16} /> 修改</button>}<button className="danger-icon" title="删除 Todo" onClick={() => window.confirm("删除这个 Todo？") && void mutate("todo", "delete", todo.id)}><Trash2 size={17} /></button></div></div><label className="detail-field"><span>描述</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} onCompositionStart={() => { composingRef.current = true; }} onCompositionEnd={() => { composingRef.current = false; }} onBlur={(event) => { composingRef.current = false; latestDraftRef.current = { description: event.currentTarget.value, result: latestDraftRef.current.result }; void saveDrafts(); }} /></label><div className="detail-grid"><label className="detail-field"><span>状态</span><select value={todo.status} onChange={(event) => void mutate("todo", "update", todo.id, { status: event.target.value })}><option value="not_started">未开始</option><option value="in_progress">进行中</option><option value="completed">已完成</option></select></label><label className="switch-field"><input type="checkbox" checked={todo.isToday} onChange={(event) => void mutate("todo", "update", todo.id, { isToday: event.target.checked })} /><span>加入今日任务</span></label></div>{(sourceIdea || sourceDocument || todo.sourceQuote) && <div className="provenance-card"><strong><Link2 size={15} /> 为什么产生这个任务</strong>{sourceIdea && <p>灵感：{sourceIdea.title}</p>}{sourceDocument && <p>知识：{sourceDocument.title}</p>}{todo.sourceQuote && <blockquote>“{todo.sourceQuote}”</blockquote>}</div>}<label className="detail-field result-field"><span>任务结果 / 结论</span><textarea value={result} onChange={(event) => setResult(event.target.value)} onCompositionStart={() => { composingRef.current = true; }} onCompositionEnd={() => { composingRef.current = false; }} onBlur={(event) => { composingRef.current = false; latestDraftRef.current = { description: latestDraftRef.current.description, result: event.currentTarget.value }; void saveDrafts(); }} placeholder="完成后，把得到的结论写在这里…" /></label><div className="detail-actions"><button className="primary-button" onClick={() => void mutate("todo", "update", todo.id, { description, result, status: "completed" })}><Check size={16} /> 保存并结束任务</button>{sourceDocument && <button className="secondary-button" disabled={!result.trim()} onClick={() => void writeBack()}><BookOpenText size={16} /> 回写原知识</button>}</div></section>;
 }
 
 function FrameworkView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (view: View) => void }) {
