@@ -1,6 +1,6 @@
 {
   "name": "kit",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Local-first knowledge, ideas and todo workspace",
   "author": "Ruler23-star",
   "private": true,
@@ -61,7 +61,7 @@
     ],
     "extraResources": [
       {
-        "from": ".next/standalone",
+        "from": ".desktop-server",
         "to": "next"
       },
       {

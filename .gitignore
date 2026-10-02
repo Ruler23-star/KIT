@@ -18,3 +18,4 @@ data/uploads/*
 .next-preview/
 .next-validation/
 .desktop-runtime/
+.desktop-server/
