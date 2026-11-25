@@ -69,6 +69,7 @@ sqlite.exec(`
     scheduled_start_date TEXT,
     scheduled_time TEXT,
     scheduled_duration INTEGER NOT NULL DEFAULT 60,
+    excluded_dates TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY(source_document_id) REFERENCES knowledge_documents(id) ON DELETE SET NULL,
@@ -87,6 +88,7 @@ const todoColumns = sqlite.prepare("PRAGMA table_info(todos)").all() as Array<{ 
 if (!todoColumns.some((column) => column.name === "scheduled_start_date")) sqlite.exec("ALTER TABLE todos ADD COLUMN scheduled_start_date TEXT");
 if (!todoColumns.some((column) => column.name === "scheduled_time")) sqlite.exec("ALTER TABLE todos ADD COLUMN scheduled_time TEXT");
 if (!todoColumns.some((column) => column.name === "scheduled_duration")) sqlite.exec("ALTER TABLE todos ADD COLUMN scheduled_duration INTEGER NOT NULL DEFAULT 60");
+if (!todoColumns.some((column) => column.name === "excluded_dates")) sqlite.exec("ALTER TABLE todos ADD COLUMN excluded_dates TEXT NOT NULL DEFAULT '[]'");
 if (!todoColumns.some((column) => column.name === "automation_kind")) sqlite.exec("ALTER TABLE todos ADD COLUMN automation_kind TEXT");
 if (!todoColumns.some((column) => column.name === "automation_date")) sqlite.exec("ALTER TABLE todos ADD COLUMN automation_date TEXT");
 if (!todoColumns.some((column) => column.name === "was_scheduled")) sqlite.exec("ALTER TABLE todos ADD COLUMN was_scheduled INTEGER NOT NULL DEFAULT 0");
@@ -112,7 +114,7 @@ function mapIdea(row: typeof ideas.$inferSelect): Idea {
 }
 
 function mapTodo(row: typeof todos.$inferSelect): Todo {
-  return row;
+  return { ...row, excludedDates: safeTags(row.excludedDates) };
 }
 
 function seedIfEmpty() {
@@ -273,7 +275,7 @@ export async function getWorkspaceData(): Promise<WorkspaceData> {
   maintainDailyBriefingTodo();
   const [folderRows, documentRows, ideaRows, todoRows] = await Promise.all([
     db.select().from(knowledgeFolders).orderBy(knowledgeFolders.name),
-    db.select().from(knowledgeDocuments).orderBy(desc(knowledgeDocuments.updatedAt)),
+    db.select().from(knowledgeDocuments).orderBy(desc(knowledgeDocuments.createdAt)),
     db.select().from(ideas).orderBy(desc(ideas.updatedAt)),
     db.select().from(todos).orderBy(desc(todos.updatedAt)),
   ]);
@@ -391,6 +393,7 @@ export async function createTodo(input: Pick<Todo, "title"> & Partial<Todo>) {
     scheduledStartDate: input.scheduledStartDate ?? null,
     scheduledTime: input.scheduledTime ?? null,
     scheduledDuration: input.scheduledDuration ?? 60,
+    excludedDates: JSON.stringify(input.excludedDates ?? []),
     automationKind: input.automationKind ?? null,
     automationDate: input.automationDate ?? null,
     wasScheduled: input.wasScheduled ?? Boolean(input.scheduledStartDate),
@@ -406,6 +409,7 @@ export async function updateTodo(id: string, input: Partial<Todo>) {
   for (const key of ["title", "description", "status", "priority", "isToday", "sourceType", "sourceDocumentId", "sourceIdeaId", "sourceQuote", "result", "completedAt", "scheduledStartDate", "scheduledTime", "scheduledDuration"] as const) {
     if (key in input) update[key] = input[key] as never;
   }
+  if (input.excludedDates) update.excludedDates = JSON.stringify(input.excludedDates);
   if (input.scheduledStartDate) update.wasScheduled = true;
   if (input.status === "completed" && !("completedAt" in input)) update.completedAt = new Date().toISOString();
   if (input.status && input.status !== "completed") update.completedAt = null;

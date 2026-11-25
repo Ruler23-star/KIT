@@ -1,0 +1,146 @@
+.kit-theme-toggle { flex: 0 0 auto; padding: 0; border: 0; }
+.kit-theme-toggle:focus-visible { outline: 2px solid #a9cbff; outline-offset: 4px; }
+
+:root[data-kit-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e3ebf6;
+  --muted: #a7b6ca;
+  --line: #344258;
+  --paper: #192333;
+  --canvas: #121a27;
+  --navy: #a7cbff;
+  --blue: #86b6ff;
+  --dark-raised: #202d40;
+  --dark-active: #2b4564;
+  --dark-link: #a9ceff;
+
+  .sidebar { background: #0d1623; }
+  .sidebar:has(.article-shortcuts.drop-active) { background: #1c2b41; }
+
+  :is(.topbar, .today-panel, .insight-card, .recent-card, .module-card, .dashboard-month-calendar,
+      .knowledge-layout, .document-editor-panel, .editor-frame.editor-fullscreen, .editor-toolbar,
+      .capture-card, .idea-card, .idea-focus-dialog .idea-card.expanded, .task-calendar-panel,
+      .todo-detail, .todo-date-picker, .calendar-detail-dialog, .folder-edit-dialog, .comparison-dialog,
+      .selection-actions, .selection-ai-panel, .image-layout-popover, .image-crop-actions,
+      .document-title-tooltip, .article-shortcut-title, .ai-dialog, .topic-panel, .connection-panel,
+      .framework-stats article, .knowledge-map-section, .knowledge-summary, .learning-next) {
+    background: var(--paper);
+    border-color: var(--line);
+    color: var(--ink);
+  }
+
+  :is(.document-list-panel, .source-panel, .todo-calendar-page, .todo-calendar-library,
+      .todo-library, .framework-hero, .dashboard-calendar-weekdays, .dashboard-calendar-grid > div.outside,
+      .week-calendar-head, .month-weekdays, .month-grid button.outside) {
+    background: var(--canvas);
+    border-color: var(--line);
+  }
+
+  :is(.quick-add, .secondary-button, .ghost-button, .check-button, .notice, .tag-cloud em,
+      .toolbar-select, .highlight-select, .editor-toolbar .editor-fullscreen-toggle,
+      .image-layout-control > button, .image-crop-actions button, .selection-actions button,
+      .comparison-layout-options button, .comparison-layout-options > .comparison-layout-toggle,
+      .comparison-dialog button, .comparison-unit-actions label, .comparison-dialog .comparison-card,
+      .comparison-upload, .comparison-placeholder > span, .summary-box, .source-type-options,
+      .calendar-task-card, .calendar-undo-button, .calendar-mode-switch, .calendar-mode-switch button,
+      .calendar-nav-button, .calendar-today-button, .idea-focus-close, .calendar-detail-close,
+      .folder-edit-dialog header > button, .todo-date-picker > header button, .date-picker-nav button,
+      .todo-status-options button, .detail-actions > .primary-button:first-child, .provenance-card,
+      .idea-card blockquote, .idea-card footer > button:first-child, .ai-dialog header > button,
+      .ai-option-list > button, .topic-node, .tree-root, .map-document > button, .map-idea,
+      .dashboard-month-calendar > header button, .calendar-unschedule-zone, .summary-path em,
+      .loop-line span, .folder-edit-delete, .document-expand-button, .source-expand-button,
+      .week-task-remove, .framework-actions .primary-button, .todo-calendar-library-heading > strong) {
+    background: var(--dark-raised);
+    border-color: var(--line);
+    color: var(--ink);
+  }
+
+  :is(.document-item-row:hover, .document-item-row.active, .folder-toggle:hover, .folder-add:hover,
+      .editor-toolbar button.active, .image-layout-control > button.active,
+      .image-layout-popover button.active, .image-layout-popover button:hover,
+      .comparison-layout-options button.active, .comparison-layout-options > .comparison-layout-toggle.active,
+      .calendar-task-card.active, .calendar-mode-switch button.active, .week-calendar-head div.today,
+      .date-picker-grid button.selected, .filter-tabs button.active, .library-todo.active) {
+    background: var(--dark-active);
+    color: var(--dark-link);
+  }
+
+  :is(.prose-editor, .date-row p, .progress-ring strong, .recent-item strong, .document-item strong,
+      .folder-toggle strong, .panel-title strong, .todo-direct-title, .idea-direct-title, .capture-card strong,
+      .dashboard-month-calendar > header h3, .dashboard-calendar-date > strong, .calendar-task-card strong,
+      .calendar-header > div:first-child .eyebrow, .calendar-header-controls > strong,
+      .week-calendar-head div strong, .month-grid button,
+      .todo-date-picker > header strong, .date-picker-nav strong, .library-todo strong, .ai-dialog header h3,
+      .ai-option-list strong, .framework-stats strong, .map-document strong, .map-idea strong) {
+    color: var(--ink);
+  }
+
+  :is(.eyebrow, .section-label, .document-item, .document-item small, .folder-toggle,
+      .folder-toggle small, .source-field > span, .editor-toolbar button, .toolbar-select select,
+      .image-layout-popover strong, .image-layout-popover button, .dashboard-calendar-weekdays span,
+      .week-task-event span, .week-task-event small, .calendar-task-card p, .calendar-task-card small,
+      .detail-field > span, .todo-status-field legend, .switch-field, .idea-card > p,
+      .framework-hero p, .summary-box p, .provenance-card p, .empty-state) {
+    color: var(--muted);
+  }
+  .todo-calendar-library-heading h2::after { color: var(--ink); }
+  .toolbar-select select, .toolbar-select select option {
+    color-scheme: dark;
+    background-color: var(--dark-raised);
+    color: var(--ink);
+  }
+
+  :is(.document-title-row input, .quick-add input, .todo-direct-title, .idea-direct-title) {
+    background: transparent;
+    color: var(--ink);
+  }
+
+  :is(.source-field input, .source-field select, .source-field textarea, .compact-folder-picker select,
+      .capture-card textarea, .folder-edit-dialog input, .idea-card-editor input, .idea-card-editor textarea,
+      .comparison-unit input:not([type=file]), .comparison-unit textarea, .detail-field textarea,
+      .detail-field select, .todo-title-editor input) {
+    background: var(--canvas);
+    border-color: var(--line);
+    color: var(--ink);
+  }
+
+  :is(.dashboard-calendar-grid > div, .week-day-column, .week-calendar-head > div) {
+    background-color: var(--paper);
+    border-color: var(--line);
+  }
+  .month-grid button { background: var(--paper); border-color: var(--line); }
+  .month-grid button:hover { background: var(--dark-raised); }
+  .week-calendar-head > div.today, .month-grid button.outside, .dashboard-calendar-grid > div.outside { background-color: var(--canvas); }
+  .week-task-event { background: var(--dark-raised); border-color: var(--line); color: var(--ink); }
+  :is(.editor-toolbar button.active, .image-layout-popover button.active, .image-layout-popover button:hover) { color: var(--dark-link); }
+  :is(.todo-direct-title, .idea-direct-title):focus { background: var(--dark-raised); }
+  :is(.library-todo, .ai-option-list > button, .map-document > button, .map-idea, .calendar-nav-button,
+      .calendar-today-button, .calendar-undo-button, .ghost-button, .secondary-button, .source-type-options button,
+      .selection-actions button, .image-layout-control > button, .image-crop-actions button,
+      .editor-toolbar .editor-fullscreen-toggle, .dashboard-month-calendar > header button,
+      .detail-actions > .primary-button:first-child):hover {
+    background: var(--dark-active);
+    color: var(--dark-link);
+  }
+  :is(.todo-status-options button, .detail-actions > .primary-button:first-child) { box-shadow: none; }
+  .progress-ring::after, .comparison-icon svg + svg { background: var(--paper); }
+  .progress-track, .toolbar-divider, .recent-item { background: var(--dark-raised); }
+  .prose-editor a { color: var(--dark-link); }
+  .prose-editor blockquote { background: var(--dark-raised); color: var(--muted); }
+  /* Tiptap emits inline color: inherit for multicolor highlights. */
+  .prose-editor mark, .prose-editor mark * { color: #18212f !important; }
+  .prose-editor pre { background: var(--canvas); color: var(--ink); }
+  .knowledge-layout { scrollbar-color: #62718a var(--canvas); }
+  .knowledge-layout::-webkit-scrollbar-track { background: var(--canvas); }
+
+  :is(.week-task-event.in_progress, .status-pill.in_progress, .todo-status-options button.in_progress.selected) {
+    background: #382735; color: #ffb8be; border-color: #7a4b57;
+  }
+  :is(.week-task-event.completed, .status-pill.completed, .todo-status-options button.completed.selected) {
+    background: #203932; color: #a8dec4; border-color: #507a69;
+  }
+  :is(.week-task-event.not_started, .status-pill.not_started, .todo-status-options button.not_started.selected) {
+    background: #392f24; color: #f2d29a; border-color: #7d6846;
+  }
+}

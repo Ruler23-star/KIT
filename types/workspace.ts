@@ -54,6 +54,7 @@ export type Todo = {
   scheduledStartDate: string | null;
   scheduledTime: string | null;
   scheduledDuration: number;
+  excludedDates: string[];
   automationKind: string | null;
   automationDate: string | null;
   wasScheduled: boolean;

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./dark-theme.css";
 
 export const metadata: Metadata = {
   title: "KIT · Personal Knowledge Workspace",

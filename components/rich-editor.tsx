@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type UIEvent } from "react";
 import { createPortal } from "react-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { Extension, type Editor } from "@tiptap/core";
+import { ImageComparison, ComparisonIcon } from "./image-comparison";
+import { Extension, Mark, Node as TiptapNode, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
@@ -16,6 +17,10 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import {
   Bold,
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   Check,
   Crop,
   Highlighter,
@@ -27,7 +32,6 @@ import {
   List,
   ListOrdered,
   Maximize2,
-  MessageSquareText,
   Minimize2,
   Pilcrow,
   Quote,
@@ -44,8 +48,35 @@ type CropHandle = "top-left" | "top" | "top-right" | "right" | "bottom-right" | 
 
 const CROP_HANDLES: CropHandle[] = ["top-left", "top", "top-right", "right", "bottom-right", "bottom", "bottom-left", "left"];
 
+const MediaRowBreak = TiptapNode.create({
+  name: "mediaRowBreak",
+  group: "block",
+  atom: true,
+  selectable: false,
+  parseHTML() { return [{ tag: 'div[data-media-row-break]' }]; },
+  renderHTML() { return ["div", { "data-media-row-break": "true", class: "media-row-break" }]; },
+});
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function mediaDropTarget(dom: HTMLElement, x: number, y: number) {
+  const candidates = Array.from(dom.querySelectorAll<HTMLElement>("[data-resize-container], .node-imageComparison"))
+    .filter((element) => !element.classList.contains("ProseMirror-selectednode") && !element.querySelector(".comparison-node.selected"));
+  const measured = candidates.map((target) => ({
+    target,
+    bounds: (target.querySelector(".comparison-placeholder") ?? target.querySelector("img") ?? target).getBoundingClientRect(),
+  }));
+  const nearest = measured.filter(({ bounds }) => y >= bounds.top - 32 && y <= bounds.bottom + 64)
+    .sort((a, b) => {
+      const distance = (bounds: DOMRect) => Math.hypot(Math.max(bounds.left - x, 0, x - bounds.right), Math.max(bounds.top - y, 0, y - bounds.bottom) * 2);
+      return distance(a.bounds) - distance(b.bounds);
+    })[0];
+  if (!nearest) return null;
+  const { target, bounds } = nearest;
+  const beside = y >= bounds.top && y <= bounds.bottom && (x < bounds.left + bounds.width * .25 || x > bounds.right - bounds.width * .25);
+  return { target, bounds, beside, before: beside ? x < bounds.left + bounds.width / 2 : y < bounds.top + bounds.height / 2 };
 }
 
 const StyledBulletList = BulletList.extend({
@@ -61,14 +92,53 @@ const StyledBulletList = BulletList.extend({
   },
 });
 
+const TextAlignment = Extension.create({
+  name: "textAlignment",
+  addGlobalAttributes() {
+    return [{
+      types: ["heading", "paragraph"],
+      attributes: {
+        textAlign: {
+          default: null,
+          parseHTML: (element) => element.style.textAlign || null,
+          renderHTML: (attributes) => attributes.textAlign
+            ? { style: `text-align: ${attributes.textAlign}` }
+            : {},
+        },
+      },
+    }];
+  },
+});
+
+const InlineAlignment = Mark.create({
+  name: "inlineAlignment",
+  inclusive: false,
+  addAttributes() {
+    return {
+      textAlign: {
+        default: "left",
+        parseHTML: (element) => element.getAttribute("data-text-align") || "left",
+        renderHTML: (attributes) => ({ "data-text-align": attributes.textAlign }),
+      },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-text-align]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    const textAlign = HTMLAttributes["data-text-align"] || "left";
+    return ["span", { ...HTMLAttributes, style: `display: block; width: 100%; text-align: ${textAlign}` }, 0];
+  },
+});
+
 const InteractiveImage = Image.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
       layout: {
-        default: "block",
+        default: "center",
         parseHTML: (element) => element.getAttribute("data-image-layout") || "block",
-        renderHTML: (attributes) => ({ "data-image-layout": attributes.layout || "block" }),
+        renderHTML: (attributes) => ({ "data-image-layout": attributes.layout || "center" }),
       },
     };
   },
@@ -163,6 +233,17 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
   const [cropError, setCropError] = useState("");
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
   const [showFormattingMarks, setShowFormattingMarks] = useState(false);
+  const [mediaDropHint, setMediaDropHint] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    const clear = () => {
+      setMediaDropHint(null);
+      editorRef.current?.view.dom.classList.remove("media-drag-active");
+    };
+    window.addEventListener("dragend", clear);
+    window.addEventListener("drop", clear);
+    return () => { window.removeEventListener("dragend", clear); window.removeEventListener("drop", clear); };
+  }, []);
+  const [, setToolbarRevision] = useState(0);
 
   onChangeRef.current = onChange;
 
@@ -211,21 +292,118 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
-      StarterKit.configure({ bulletList: false }),
+      StarterKit.configure({ bulletList: false, dropcursor: { class: "kit-drop-cursor" } }),
       StyledBulletList,
       TextStyle,
       FontSize,
       Highlight.configure({ multicolor: true }),
       InteractiveImage,
+      ImageComparison,
+      MediaRowBreak,
       Placeholder.configure({ placeholder: "开始记录你的理解、问题和线索…" }),
       TaskList,
       TaskItem.configure({ nested: true }),
       FormattingMarks,
+      TextAlignment,
+      InlineAlignment,
     ],
     content,
+    parseOptions: { preserveWhitespace: "full" },
     editorProps: {
       attributes: { class: "prose-editor" },
+      handleDrop: (view, event, slice, moved) => {
+        setMediaDropHint(null);
+        const supported = (name: string) => name === "image" || name === "imageComparison";
+        if (!moved || slice.content.childCount !== 1 || !slice.content.firstChild || !supported(slice.content.firstChild.type.name)) return false;
+        const source = slice.content.firstChild;
+        let sourcePosition: number | null = null;
+        const selection = view.state.selection;
+        const selectedNode = view.state.doc.nodeAt(selection.from);
+        if (selectedNode?.eq(source)) {
+          sourcePosition = selection.from;
+        } else {
+          view.state.doc.descendants((node, position) => {
+            if (sourcePosition === null && supported(node.type.name) && node.eq(source)) sourcePosition = position;
+          });
+        }
+        if (sourcePosition === null) return false;
+        const placement = mediaDropTarget(view.dom, event.clientX, event.clientY);
+        if (!placement) return false;
+        const { target, bounds, beside, before } = placement;
+        const targetPosition = view.posAtDOM(target, 0);
+        const resolved = view.state.doc.resolve(targetPosition);
+        let position = targetPosition;
+        for (let depth = resolved.depth; depth > 0; depth -= 1) {
+          if (supported(resolved.node(depth).type.name)) { position = resolved.before(depth); break; }
+        }
+        const targetNode = view.state.doc.nodeAt(position);
+        if (!targetNode || !supported(targetNode.type.name)) return false;
+        if (position === sourcePosition) return false;
+        event.preventDefault();
+        const tr = view.state.tr;
+        tr.delete(sourcePosition, sourcePosition + source.nodeSize);
+        let targetMapped = tr.mapping.map(position);
+        let sourceAttrs: Record<string, unknown> = { ...source.attrs, layout: beside ? "block" : "own-row" };
+        if (beside) {
+          const previous = view.state.doc.resolve(position).nodeBefore;
+          const previousElement = previous ? view.nodeDOM(position - previous.nodeSize) : null;
+          const previousBounds = previousElement instanceof HTMLElement ? previousElement.getBoundingClientRect() : null;
+          const startsNewRow = targetNode.attrs.layout === "own-row" || targetNode.attrs.layout === "center"
+            || (previous && supported(previous.type.name) && previousBounds && previousBounds.bottom <= bounds.top);
+          if (startsNewRow && previous?.type.name !== "mediaRowBreak") {
+            const rowBreak = view.state.schema.nodes.mediaRowBreak.create();
+            tr.insert(targetMapped, rowBreak);
+            targetMapped += rowBreak.nodeSize;
+          }
+          const available = view.dom.clientWidth - parseFloat(getComputedStyle(view.dom).paddingLeft) - parseFloat(getComputedStyle(view.dom).paddingRight);
+          const maxWidth = Math.max(80, (available - 28) / 2);
+          const targetWidth = Math.min(bounds.width, maxWidth);
+          const sourceWidth = Math.min(Number(source.attrs.width) || bounds.width, maxWidth);
+          const targetHeight = Number(targetNode.attrs.height);
+          const sourceHeight = Number(source.attrs.height);
+          tr.setNodeMarkup(targetMapped, undefined, { ...targetNode.attrs, layout: "block", width: targetWidth, ...(targetHeight ? { height: targetHeight * targetWidth / bounds.width } : {}) });
+          sourceAttrs = { ...sourceAttrs, width: sourceWidth, ...(sourceHeight && Number(source.attrs.width) ? { height: sourceHeight * sourceWidth / Number(source.attrs.width) } : {}) };
+        }
+        if (!beside && before) {
+          tr.setNodeMarkup(targetMapped, undefined, { ...targetNode.attrs, layout: "own-row" });
+        }
+        const insertion = before ? targetMapped : targetMapped + targetNode.nodeSize;
+        tr.insert(insertion, source.type.create(sourceAttrs, source.content, source.marks));
+        view.dispatch(tr.scrollIntoView());
+        return true;
+      },
       handleDOMEvents: {
+        dragstart: (view, event) => {
+          const element = event.target instanceof Element ? event.target : null;
+          if (element?.closest("[data-resize-container], .node-imageComparison")) view.dom.classList.add("media-drag-active");
+          return false;
+        },
+        dragover: (view, event) => {
+          const source = view.dragging?.slice.content.firstChild;
+          if (!source || !["image", "imageComparison"].includes(source.type.name)) {
+            setMediaDropHint(null);
+            return false;
+          }
+          const placement = mediaDropTarget(view.dom, event.clientX, event.clientY);
+          if (!placement) {
+            const drop = view.posAtCoords({ left: event.clientX, top: event.clientY });
+            if (!drop) { setMediaDropHint(null); return false; }
+            const coords = view.coordsAtPos(drop.pos);
+            setMediaDropHint({ left: coords.left, top: coords.top, width: 2, height: Math.max(20, coords.bottom - coords.top) });
+            event.preventDefault();
+            return false;
+          }
+          const { bounds, beside, before } = placement;
+          setMediaDropHint(beside
+            ? { left: before ? bounds.left - 7 : bounds.right + 5, top: bounds.top, width: 2, height: bounds.height }
+            : { left: bounds.left, top: before ? bounds.top - 10 : bounds.bottom + 10, width: bounds.width, height: 2 });
+          event.preventDefault();
+          return false;
+        },
+        dragleave: (view, event) => {
+          if (!view.dom.contains(event.relatedTarget as Node | null)) setMediaDropHint(null);
+          return false;
+        },
         pointerdown: (_view, event) => {
           if (event.button !== 0) return false;
           pointerSelectingRef.current = true;
@@ -272,6 +450,9 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
         return;
       }
       queueSave(html);
+    },
+    onTransaction: () => {
+      setToolbarRevision((revision) => revision + 1);
     },
     onSelectionUpdate: ({ editor: current }) => {
       if (!pointerSelectingRef.current) syncSelectionUi(current);
@@ -349,7 +530,7 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
 
     const now = performance.now();
     const elapsed = Math.min(32, Math.max(8, now - selectionScrollTimeRef.current));
-    const maxStep = reachedLastVisibleLine ? Math.max(1, elapsed * 0.09) : 0;
+    const maxStep = reachedLastVisibleLine ? Math.max(8, elapsed * 0.72) : 0;
     const nextTop = Math.min(requestedTop, previousTop + maxStep);
 
     selectionScrollTopRef.current = nextTop;
@@ -366,10 +547,17 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
   useEffect(() => {
     if (!editor || content === lastEmittedHtmlRef.current) return;
     if (composingRef.current || editor.view.composing || editor.isFocused || timer.current) return;
-    if (editor.getHTML() !== content) {
+    // React node views use flushSync when created. Load external HTML after
+    // React's effect/commit phase, and cancel stale loads on document changes.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || editor.isDestroyed || content === lastEmittedHtmlRef.current) return;
+      if (composingRef.current || editor.view.composing || editor.isFocused || timer.current) return;
+      if (editor.getHTML() === content) return;
       pendingHtmlRef.current = content;
-      editor.commands.setContent(content, { emitUpdate: false });
-    }
+      editor.commands.setContent(content, { emitUpdate: false, parseOptions: { preserveWhitespace: "full" } });
+    });
+    return () => { cancelled = true; };
   }, [content, editor]);
 
   useEffect(() => {
@@ -384,22 +572,26 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
       const rect = selectedImage.getBoundingClientRect();
       const image = selectedImage.querySelector("img");
       const imageBounds = image?.getBoundingClientRect() ?? rect;
-      const fitsOnRight = rect.right + 98 <= window.innerWidth;
-      const left = fitsOnRight ? rect.right + 10 : Math.max(12, rect.right - 42);
-      const top = Math.max(12, Math.min(rect.top + 8, window.innerHeight - 52));
+      const fitsOnRight = imageBounds.right + 91 <= window.innerWidth;
+      const left = fitsOnRight ? imageBounds.right + 10 : Math.max(12, imageBounds.right - 81);
+      const top = Math.max(12, Math.min(imageBounds.top, window.innerHeight - 52));
       setImageMenuPosition({ left, top });
       setImageRect({ left: imageBounds.left, top: imageBounds.top, width: imageBounds.width, height: imageBounds.height });
     };
     updatePosition();
+    const observer = new ResizeObserver(updatePosition);
+    const selectedImage = editor?.view.dom.querySelector("[data-resize-container].ProseMirror-selectednode img");
+    if (selectedImage) observer.observe(selectedImage);
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
     window.addEventListener("pointermove", updatePosition);
     return () => {
+      observer.disconnect();
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
       window.removeEventListener("pointermove", updatePosition);
     };
-  }, [imageSelected, isEditorFullscreen]);
+  }, [editor, imageSelected, isEditorFullscreen]);
 
   useEffect(() => {
     const updateCrop = (event: PointerEvent) => {
@@ -478,7 +670,7 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
   const tools = [
     { label: "一级标题", icon: Heading1, run: () => editor.chain().focus().toggleHeading({ level: 1 }).run(), active: editor.isActive("heading", { level: 1 }) },
     { label: "二级标题", icon: Heading2, run: () => editor.chain().focus().toggleHeading({ level: 2 }).run(), active: editor.isActive("heading", { level: 2 }) },
-    { label: "粗体", icon: Bold, run: () => editor.chain().focus().toggleBold().run(), active: editor.isActive("bold") },
+    { label: "粗体", icon: Bold, run: () => editor.chain().focus().toggleBold().run(), active: editor.isActive("bold"), instant: true },
     { label: "斜体", icon: Italic, run: () => editor.chain().focus().toggleItalic().run(), active: editor.isActive("italic") },
     { label: "删除线", icon: Strikethrough, run: () => editor.chain().focus().toggleStrike().run(), active: editor.isActive("strike") },
     { label: "项目列表", icon: List, run: () => editor.chain().focus().toggleBulletList().run(), active: editor.isActive("bulletList") },
@@ -492,7 +684,59 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
     chain.updateAttributes("bulletList", { bulletStyle: style }).run();
   }
 
-  function setImageLayout(layout: "block" | "center" | "float-left" | "float-right") {
+  function setTextAlignment(textAlign: "left" | "center" | "right" | "justify") {
+    if (!editor!.state.selection.empty) {
+      editor!.chain()
+        .focus()
+        .command(({ state, tr }) => {
+          const { from, to } = state.selection;
+          const markType = state.schema.marks.inlineAlignment;
+          if (!markType) return false;
+
+          state.doc.nodesBetween(from, to, (node, position) => {
+            if ((node.type.name === "paragraph" || node.type.name === "heading") && node.attrs.textAlign === textAlign) {
+              tr.setNodeMarkup(position, undefined, { ...node.attrs, textAlign: null });
+            }
+          });
+          tr.addMark(from, to, markType.create({ textAlign }));
+          return true;
+        })
+        .run();
+      return;
+    }
+
+    editor!.chain()
+      .focus()
+      .command(({ state, tr, dispatch }) => {
+        const positions = new Set<number>();
+        const { from, to } = state.selection;
+
+        state.doc.nodesBetween(from, to, (node, position) => {
+          if (node.type.name === "paragraph" || node.type.name === "heading") positions.add(position);
+        });
+
+        if (positions.size === 0) {
+          for (let depth = state.selection.$from.depth; depth > 0; depth -= 1) {
+            const node = state.selection.$from.node(depth);
+            if (node.type.name !== "paragraph" && node.type.name !== "heading") continue;
+            positions.add(state.selection.$from.before(depth));
+            break;
+          }
+        }
+
+        if (dispatch) {
+          positions.forEach((position) => {
+            const node = tr.doc.nodeAt(position);
+            if (node) tr.setNodeMarkup(position, undefined, { ...node.attrs, textAlign });
+          });
+        }
+
+        return positions.size > 0;
+      })
+      .run();
+  }
+
+  function setImageLayout(layout: "block" | "own-row" | "center" | "float-left" | "float-right") {
     editor!.chain().focus().updateAttributes("image", { layout }).run();
     setImageLayoutOpen(false);
   }
@@ -587,7 +831,7 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
             value={editor.getAttributes("textStyle").fontSize || ""}
             onChange={(event) => event.target.value ? editor.chain().focus().setFontSize(event.target.value).run() : editor.chain().focus().unsetFontSize().run()}
           >
-            <option value="">默认</option>
+            <option value="">默认（16）</option>
             <option value="12px">12</option>
             <option value="14px">14</option>
             <option value="16px">16</option>
@@ -596,8 +840,34 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
             <option value="32px">32</option>
           </select>
         </label>
-        {tools.map(({ label, icon: Icon, run, active }) => (
-          <button key={label} title={label} aria-label={label} className={active ? "active" : ""} onClick={run}><Icon size={17} /></button>
+        {tools.map(({ label, icon: Icon, run, active, instant }) => (
+          <button
+            key={label}
+            title={label}
+            aria-label={label}
+            className={active ? "active" : ""}
+            onPointerDown={instant ? (event) => { event.preventDefault(); run(); } : undefined}
+            onClick={instant ? (event) => { if (event.detail === 0) run(); } : run}
+          >
+            <Icon size={17} />
+          </button>
+        ))}
+        <span className="toolbar-divider" />
+        {[
+          { label: "左对齐", value: "left" as const, icon: AlignLeft },
+          { label: "居中对齐", value: "center" as const, icon: AlignCenter },
+          { label: "右对齐", value: "right" as const, icon: AlignRight },
+          { label: "两端对齐", value: "justify" as const, icon: AlignJustify },
+        ].map(({ label, value, icon: Icon }) => (
+          <button
+            key={value}
+            title={label}
+            aria-label={label}
+            className={editor.isActive("inlineAlignment", { textAlign: value }) || editor.isActive({ textAlign: value }) || (value === "left" && !editor.getAttributes("paragraph").textAlign && !editor.getAttributes("heading").textAlign) ? "active" : ""}
+            onClick={() => setTextAlignment(value)}
+          >
+            <Icon size={17} />
+          </button>
         ))}
         <label className="toolbar-select" title="选择项目符号样式">
           <List size={15} />
@@ -627,6 +897,7 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
         <button title="撤销" aria-label="撤销" onClick={() => editor.chain().focus().undo().run()}><Undo2 size={17} /></button>
         <button title="恢复" aria-label="恢复" onClick={() => editor.chain().focus().redo().run()}><Redo2 size={17} /></button>
         <button title="插入图片" aria-label="插入图片" onClick={() => fileRef.current?.click()}><ImagePlus size={17} /></button>
+        <button title="多图片对比" aria-label="插入多图片对比" onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().insertContent({ type: "imageComparison", attrs: { images: [] } }).run()}><ComparisonIcon /></button>
         <button className={showFormattingMarks ? "active" : ""} title="显示/隐藏回车符号" aria-label="显示/隐藏回车符号" onClick={() => setShowFormattingMarks((visible) => !visible)}><Pilcrow size={17} /></button>
         <button
           className="editor-fullscreen-toggle"
@@ -641,6 +912,7 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
         {uploading && <span className="save-state">正在保存图片…</span>}
       </div>
 
+      {mediaDropHint && createPortal(<div className="media-drop-hint" style={{ position: "fixed", ...mediaDropHint }} />, document.body)}
       {imageSelected && (
         <div className="image-layout-control" style={{ left: imageMenuPosition.left, top: imageMenuPosition.top }}>
           <button className={imageLayoutOpen ? "active" : ""} aria-label="图片布局选项" title="图片布局选项" onClick={() => { setCropMode(false); setImageLayoutOpen((open) => !open); }}><WrapText size={21} /></button>
@@ -648,7 +920,7 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
           {imageLayoutOpen && <div className="image-layout-popover">
             <strong>文字环绕</strong>
             <button className={(editor.getAttributes("image").layout || "block") === "block" ? "active" : ""} onClick={() => setImageLayout("block")}><span className="layout-preview inline" />嵌入型</button>
-            <button className={editor.getAttributes("image").layout === "center" ? "active" : ""} onClick={() => setImageLayout("center")}><span className="layout-preview center" />上下型</button>
+            <button className={editor.getAttributes("image").layout === "center" ? "active" : ""} onClick={() => setImageLayout("center")}><span className="layout-preview center" />居中</button>
             <button className={editor.getAttributes("image").layout === "float-left" ? "active" : ""} onClick={() => setImageLayout("float-left")}><span className="layout-preview left" />四周型 · 左</button>
             <button className={editor.getAttributes("image").layout === "float-right" ? "active" : ""} onClick={() => setImageLayout("float-right")}><span className="layout-preview right" />四周型 · 右</button>
           </div>}
@@ -691,13 +963,12 @@ export function RichEditor({ content, onChange, onCreateIdea, onCreateTodo }: Ri
 
       {selectedText && (
         <div
-          className="selection-actions"
+          className={`selection-actions ${aiOpen ? "ai-expanded" : ""}`}
           style={{ left: selectionPosition.left, top: selectionPosition.top }}
           onPointerDown={(event) => event.preventDefault()}
           onMouseDown={(event) => event.preventDefault()}
         >
           <div className="selection-actions-row">
-            <span title={selectedText}><MessageSquareText size={15} /> 已选择“{selectedText.slice(0, 24)}{selectedText.length > 24 ? "…" : ""}”</span>
             <button onClick={() => onCreateIdea(selectedText)}><Lightbulb size={15} /> 灵感</button>
             <button onClick={() => onCreateTodo(selectedText)}><List size={15} /> Todo</button>
             <button className={aiOpen ? "active" : ""} onClick={() => { setAiOpen((open) => !open); setAiStatus(""); }}><Sparkles size={15} /> AI</button>
